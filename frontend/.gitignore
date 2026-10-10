@@ -1,0 +1,21 @@
+# Build outputs/dependencies
+node_modules/
+dist/
+.vite/
+*.log
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Python/backend output if eventually included in this repo
+.venv/
+__pycache__/
+*.pyc
