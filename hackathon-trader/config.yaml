@@ -1,0 +1,31 @@
+# Central config. Change tickers/params here, not in code.
+tickers: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, JPM, XOM, UNH,
+          JNJ, V, WMT, PG, HD, KO, PEP, COST, AMD, NFLX]
+benchmark: SPY            # used for excess-return label and market features; never traded
+history_days: 1100        # ~3 years of calendar days
+alpaca_feed: iex          # free tier = iex. Use sip only if your plan allows it.
+label:
+  horizon_days: 5         # label = open[t+1+H]/open[t+1]-1 minus same for SPY
+split:
+  test_frac: 0.20         # last 20% of dates = held-out test
+  val_frac: 0.15          # last 15% of the train dates = validation (early stopping / alpha)
+  gap_days: 7             # trading days dropped between adjacent splits (> label horizon)
+ridge:
+  alphas: [0.1, 1, 10, 100, 1000, 10000]
+mlp:
+  h1: 32
+  h2: 16
+  dropout: 0.2
+  lr: 0.001
+  weight_decay: 0.001
+  epochs: 300
+  patience: 20
+  seed: 42
+strategy:
+  top_k: 5                # max positions
+  agree_top_frac: 0.4     # both models must rank the name in their top 40%
+  min_conviction: 0.0     # mlp mu/sigma must exceed this
+  max_gross: 0.5          # max fraction of equity invested
+  max_position: 0.10      # per-name cap (fraction of equity)
+  min_order_usd: 25
+  cost_bps: 5             # one-way cost assumption in the backtest

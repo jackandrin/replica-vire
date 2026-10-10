@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the trader cycle after the US market close
+
+[Timer]
+# 16:20 New York time, Mon-Fri, independent of the server's timezone
+OnCalendar=Mon..Fri 16:20 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

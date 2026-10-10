@@ -1,0 +1,12 @@
+[Unit]
+Description=Hackathon Trader daily cycle (ingest, features, predict, paper orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/.venv/bin/python -m src.run_cycle
+StandardOutput=append:__DIR__/logs/cycle.log
+StandardError=append:__DIR__/logs/cycle.log
