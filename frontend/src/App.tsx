@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import TradingDashboard from './trading/TradingDashboard';
 import { apiGet, type Overview, type Stock, type StockDetail, type Performance, type Replay } from './api';
 
 const number = (v: number | null | undefined, digits = 2) => v == null || !Number.isFinite(v) ? '—' : v.toFixed(digits);
@@ -14,7 +15,7 @@ function Badge({ children, blush = false }: { children: React.ReactNode; blush?:
 function Metric({ label, value, note, toneClass = 'dark' }: { label: string; value: string; note: string; toneClass?: string }) {
   return <div className="metric"><span className="eyebrow">{label}</span><strong className={`mono ${toneClass}`}>{value}</strong><small>{note}</small></div>;
 }
-function Header({ onHome }: { onHome: () => void }) {
+function Header({ onHome, onLaunch }: { onHome: () => void; onLaunch: () => void }) {
   const go = (id: string) => { onHome(); scrollToId(id); };
   return <header className="site-header">
     <button className="logo" onClick={onHome} aria-label="ReplicaVire home"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><span className="wordmark">ReplicaVire</span><span className="descriptor">EQUITY RESEARCH</span></button>
@@ -23,7 +24,7 @@ function Header({ onHome }: { onHome: () => void }) {
       <button onClick={() => go('performance')}>Model Performance</button><button onClick={() => go('methodology')}>Methodology</button>
       <button onClick={() => go('about')}>About</button>
     </nav>
-    <div className="header-actions"><button className="button dark launch" onClick={() => go('screener')}>Launch Dashboard</button></div>
+    <div className="header-actions"><button className="button dark launch" onClick={onLaunch}>Launch Dashboard</button></div>
   </header>;
 }
 function TrendChart({ values, labels, title, height = 180 }: { values: (number | null)[]; labels?: string[]; title: string; height?: number }) {
@@ -222,12 +223,14 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [trading, setTrading] = useState(false);
   useEffect(() => { const ctrl = new AbortController(); setLoading(true); setApiError('');
     apiGet<Overview>('/api/overview', ctrl.signal).then(setOverview).catch(e => { if (!ctrl.signal.aborted) { setOverview(null); setApiError(e.message); } }).finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
     return () => ctrl.abort();
   }, [refresh]);
   const goHome = () => { setSelected(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  return <div className="app"><Header onHome={goHome} />
+  if (trading) return <TradingDashboard stocks={overview?.stocks ?? []} loading={loading} error={apiError} onExit={() => { setTrading(false); window.scrollTo(0, 0); }} />;
+  return <div className="app"><Header onHome={goHome} onLaunch={() => { setTrading(true); window.scrollTo(0, 0); }} />
     {selected ? <StockAnalysis ticker={selected} onBack={() => { setSelected(null); scrollToId('screener'); }} /> : <main>
       {apiError && <div className="connection-error" role="alert"><b>Backend unavailable:</b> {apiError}. Start the Python API and verify TigerData is configured. <button className="button secondary" onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}
       <Hero overview={overview} connected={!!overview} />
