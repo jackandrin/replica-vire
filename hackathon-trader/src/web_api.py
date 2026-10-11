@@ -289,15 +289,35 @@ def _block(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def published_metrics():
+    """Metrics of the newest run published to Tiger Data (src.publish_models), or None."""
+    if not os.getenv("TIGER_DATABASE_URL", "").strip():
+        return None
+    try:
+        with tiger() as conn, conn.cursor() as cur:
+            if not table_exists(cur, "model_runs"):
+                return None
+            cur.execute("SELECT metrics FROM model_runs ORDER BY created_at DESC LIMIT 1")
+            r = cur.fetchone()
+    except Exception:  # noqa: BLE001  fall back to a local metrics.json
+        return None
+    if not r:
+        return None
+    return r[0] if isinstance(r[0], dict) else json.loads(r[0])
+
+
 @app.get("/api/performance")
 def performance():
+    data = published_metrics()
     path = ROOT / "results" / "metrics.json"
-    if not path.is_file():
-        return {"status": "unavailable", "horizons": [], "regressors": [], "reason": "Run python -m src.train first"}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = None
+    if data is None and not path.is_file():
+        return {"status": "unavailable", "horizons": [], "regressors": [],
+                "reason": "No published model yet: run python -m src.train, then python -m src.publish_models"}
+    if data is None:  # local development without a published run
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
     if not isinstance(data, dict):
         return {"status": "unavailable", "horizons": [], "regressors": [], "reason": "Cannot read metrics.json"}
     found = _block(data.get("horizons"))

@@ -1,8 +1,8 @@
+# Secrets: the environment variables file(s). .env.example stays tracked.
 .env
+.env.*
+!.env.example
+
+# Too big for GitHub (100 MB file limit) or machine-specific; recreated by setup / backfill, never needed by Vercel.
 .venv/
-__pycache__/
 data/
-logs/
-models/
-results/
-*.pyc

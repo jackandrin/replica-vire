@@ -27,6 +27,7 @@ Run "sentiment agent"  @("-m", "src.sentiment_agent", "--backend", "cortex", "--
 Run "import sentiment" @("-m", "src.sentiment_agent", "--import-bundle")
 Run "re-export bundle" (@("-m", "src.export_dataset") + $st)
 Run "train"            @("-m", "src.train", "--rebuild-features")
+Run "publish model"    @("-m", "src.publish_models", "--no-sentiment")
 Run "predict"          @("-m", "src.predict")
 if ($Place) { Run "autotrade (PAPER orders)" @("-m", "src.autotrade") } else { Run "autotrade (alerts only)" @("-m", "src.autotrade", "--no-orders") }
 Run "snowflake sync"   @("-m", "src.sync_snowflake") -Optional

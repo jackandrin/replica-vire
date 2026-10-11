@@ -11,6 +11,7 @@ python -m src.sentiment_agent --backend cortex --source bundle --sink bundle
 python -m src.sentiment_agent --import-bundle
 python -m src.export_dataset            # re-export so the bundle includes sentiment_events
 python -m src.train --rebuild-features
+python -m src.publish_models --no-sentiment   # metrics -> website, models -> predict (sentiment already imported)
 python -m src.predict
 if [ "${1:-}" = "--place" ]; then python -m src.autotrade; else python -m src.autotrade --no-orders; fi
 python -m src.sync_snowflake || echo "snowflake sync failed (non-blocking)"

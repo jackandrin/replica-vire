@@ -1,10 +1,13 @@
 """Live inference: latest decision time -> 15 regressors -> fusion network -> direction vectors -> `signals`.
-python -m src.predict [--models models/v2]
+python -m src.predict [--models models/v2]   (default: newest version published to Tiger, else models/v2)
 
 Loads a short window from Tiger Data (~45 days of 15-min bars, ~14 months of daily bars, events, recent
 sentiment), builds features for the most recent completed 15-min bar only, and writes one `signals` row per
 symbol with the chosen horizon, all six (mu, sigma), the 15 regressor outputs and the top attributed drivers."""
+from __future__ import annotations
+
 import argparse
+import hashlib
 import json
 from datetime import timedelta
 
@@ -19,6 +22,25 @@ from .sectors import CONTEXT_SYMBOLS, MARKET, VOL_PROXY, sector_etf_of
 from .signals import build_signals
 
 log = get_logger("predict")
+
+
+def fetch_models():
+    """Download the newest published model (src.publish_models) into models/cache/<version>/ once."""
+    runs = query_df("SELECT version FROM model_runs ORDER BY created_at DESC LIMIT 1")
+    if runs.empty:
+        return None
+    version = runs["version"].iloc[0]
+    path = ROOT / "models" / "cache" / version.replace(":", "-")
+    if not (path / "fusion.joblib").exists():
+        path.mkdir(parents=True, exist_ok=True)
+        art = query_df("SELECT name, content, sha256 FROM model_artifacts WHERE version = %s", (version,))
+        for r in art.itertuples():
+            blob = bytes(r.content)
+            if hashlib.sha256(blob).hexdigest() != r.sha256:
+                raise RuntimeError(f"model artifact {r.name} of {version} failed its checksum")
+            (path / r.name).write_bytes(blob)
+        log.info("downloaded model %s from Tiger Data", version)
+    return path
 
 
 def load_models(path):
@@ -121,10 +143,18 @@ def load_live() -> dict:
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models", default="models/v2")
+    ap.add_argument("--models", default=None, help="local model dir (default: newest published, else models/v2)")
     a = ap.parse_args(argv)
     from .autotrade import load_settings
-    meta, regs, net = load_models(a.models)
+    path = a.models
+    if path is None:
+        try:
+            path = fetch_models()
+        except Exception as e:  # noqa: BLE001  tables missing / DB hiccup -> local files
+            log.warning("could not fetch a published model (%s)", e)
+        path = path or "models/v2"
+    meta, regs, net = load_models(path)
+    log.info("using model %s", meta["version"])
     rows = score(load_live(), meta, regs, net, load_settings(), list(cfg()["tickers"]))
     if rows.empty:
         raise RuntimeError("no feature rows for the latest bar: run ingest_intraday first")

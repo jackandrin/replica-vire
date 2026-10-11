@@ -63,7 +63,8 @@ FINRA short-volume files need no key.
 | Sentiment agent (live, Cortex) | `python -m src.sentiment_agent` |
 | Sentiment backfill on a GPU | `sbatch deploy/sentiment.sbatch` (see docs/TRAINING.md) |
 | Train | `python -m src.train` (or `sbatch deploy/theia.sbatch`) |
-| Predict latest bar | `python -m src.predict` |
+| Publish a trained model to Tiger Data (website + bot use it) | `python -m src.publish_models` |
+| Predict latest bar (newest published model) | `python -m src.predict` |
 | Recommendations / paper orders | `python -m src.autotrade [--no-orders]` |
 | Live cycle | `python -m src.run_cycle [--dry-run]` |
 | Everything on one machine | `bash scripts/run_all.sh [--place]` |

@@ -1,21 +1,7 @@
-# Build outputs/dependencies
-node_modules/
-dist/
-.vite/
-*.log
-
-# Secrets and local settings
+# Secrets: the environment variables file(s). .env.example stays tracked.
 .env
 .env.*
 !.env.example
 
-# IDE and OS files
-.idea/
-*.iml
-.DS_Store
-Thumbs.db
-
-# Python/backend output if eventually included in this repo
-.venv/
-__pycache__/
-*.pyc
+# Platform-specific binaries (Windows here, Linux on Vercel): Vercel runs npm install itself.
+node_modules/

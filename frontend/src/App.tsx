@@ -201,7 +201,7 @@ function ModelPerformance() {
         </div>
       </div>
       <p className="fine-print">Training: {data.meta?.train_dates?.join(' → ') ?? '—'} · Test: {data.meta?.test_dates?.join(' → ') ?? '—'}{data.meta?.folds ? ` · ${data.meta.folds} walk-forward folds` : ''}{data.meta?.n_test_rows ? ` · ${data.meta.n_test_rows.toLocaleString()} test rows` : ''}{data.meta?.trained_at ? ` · Trained ${dateLabel(data.meta.trained_at)}` : ''}. {data.meta?.caveat ?? ''}</p></>
-    : <div className="panel empty-state"><h3>Real backtest results not available yet</h3><p>{error || data?.reason || 'Loading evaluation data…'}</p><p>Run <code>python -m src.train</code> to generate <code>results/metrics.json</code>. We will not show fabricated accuracy percentages.</p></div>}
+    : <div className="panel empty-state"><h3>Real backtest results not available yet</h3><p>{error || data?.reason || 'Loading evaluation data…'}</p><p>Results appear here after the models are trained (<code>python -m src.train</code>) and published to Tiger Data (<code>python -m src.publish_models</code>). Until then nothing is shown: we never display made-up accuracy numbers.</p></div>}
   </section>;
 }
 function HistoricalReplay({ ticker }: { ticker: string }) {

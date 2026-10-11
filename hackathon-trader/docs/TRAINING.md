@@ -53,14 +53,20 @@ python -m src.sentiment_agent --source bundle --sink bundle --estimate
 ## 3. Theia setup (once)
 
 ```bash
-rsync -av --exclude .venv --exclude logs --exclude '__pycache__' hackathon-trader/ <you>@<theia-login>:~/hackathon-trader/
 ssh <you>@<theia-login>
+git clone <your GitHub repo URL> ~/replica-vire && ln -s ~/replica-vire/hackathon-trader ~/hackathon-trader
 cd ~/hackathon-trader
 module load python            # whatever RC's Python 3.10+ module is called
 python -m venv .venv && . .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cu121     # CUDA wheel (bundles its own runtime)
 pip install -r requirements-pipeline.txt -r requirements-sentiment-hf.txt
 pytest -q                                                                  # offline tests, ~30 s
+```
+Code comes from git (a Linux clone keeps the scripts' LF line endings; `sbatch` rejects Windows CRLF). The data is
+not in git, so copy the bundle and your `.env` from the machine that ran the backfill:
+```bash
+rsync -av hackathon-trader/data/bundle/ <you>@<theia-login>:~/hackathon-trader/data/bundle/
+scp hackathon-trader/.env <you>@<theia-login>:~/hackathon-trader/.env     # only needed for step 6 (publishing)
 ```
 Download the sentiment models on the **login node**; compute nodes may have no internet:
 ```bash
@@ -105,14 +111,28 @@ sentiment agent with Cortex instead of the GPU: `python -m src.sentiment_agent -
 
 If the network does not beat the baseline on the held-out period, that is a real finding, not a failure.
 
-## 6. Deploy the trained models
+## 6. Publish to Tiger Data (this is what puts it on the website)
 
+Run this on the Theia **login node** once training has finished. It needs `.env` with `TIGER_DATABASE_URL`, and
+login nodes normally have internet:
 ```bash
-rsync -av <theia>:~/hackathon-trader/models/v2/ hackathon-trader/models/v2/
-rsync -av <theia>:~/hackathon-trader/results/   hackathon-trader/results/
-rsync -av <theia>:~/hackathon-trader/data/bundle/sentiment_events.parquet hackathon-trader/data/bundle/
-python -m src.sentiment_agent --import-bundle   # historical sentiment into Tiger (the live agent continues from it)
-python -m src.predict && python -m src.autotrade --no-orders
+cd ~/hackathon-trader && . .venv/bin/activate
+python -m src.init_db --tiger          # creates the model_runs / model_artifacts tables (safe to repeat)
+python -m src.publish_models           # models + metrics + sentiment history -> Tiger Data
+python -m src.publish_models --list    # check it arrived
 ```
-Retrain monthly or when `results/metrics.json` drifts: re-run `scripts/backfill.sh` (incremental), copy the
-bundle, `sbatch deploy/theia.sbatch`. The feature cache rebuilds automatically when the bundle changes.
+| What it uploads | Table | Who reads it |
+|---|---|---|
+| `results/metrics.json` + run metadata | `model_runs` | the website's **Performance** page (Vercel API) |
+| `models/v2/*.joblib`, `meta.json` | `model_artifacts` | `src.predict` on the bot machine downloads the newest version automatically |
+| `data/bundle/sentiment_events.parquet` | `sentiment_events` | sentiment charts on the website; the live agent continues from it |
+
+Nothing has to be committed to GitHub or copied by hand. The next `run_cycle` / `predict` on your bot machine picks up
+the new model, writes `signals`, and the website shows the new forecasts, regressors and explanations.
+
+If the login node can't reach Tiger Data (some clusters block outbound database ports), copy `models/v2/`, `results/`
+and `data/bundle/sentiment_events.parquet` to your laptop and run `python -m src.publish_models` there instead.
+
+Retrain monthly or when results drift: re-run `scripts/backfill.sh` (incremental) and copy the new bundle, then
+`sbatch deploy/theia.sbatch` and `python -m src.publish_models`. The feature cache rebuilds automatically when the
+bundle changes.

@@ -181,3 +181,12 @@ def test_login_sets_session(monkeypatch):
     assert c.get("/api/session").json() == {"authenticated": True}
     r = c.put("/api/settings", json={"min_usd": 600, "max_usd": 100})
     assert r.status_code == 422  # validated before touching the database
+
+
+def test_performance_prefers_published_run(monkeypatch):
+    published = {"horizons": {"1d": {"nn": {"ic_mean": 0.02}, "baseline": {"ic_mean": 0.01}}}, "regressors": {},
+                 "curve": [], "meta": {"trained_at": "v-published"}}
+    monkeypatch.setattr(web_api, "published_metrics", lambda: published)
+    data = TestClient(web_api.app).get("/api/performance").json()
+    assert data["status"] == "available" and data["meta"]["trained_at"] == "v-published"
+    assert data["horizons"][0]["nn"]["ic_mean"] == 0.02

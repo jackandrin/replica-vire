@@ -1,4 +1,6 @@
 """Metrics (cross-sectional IC, hit rate, sigma calibration) and a simple long-short backtest (v2)."""
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 

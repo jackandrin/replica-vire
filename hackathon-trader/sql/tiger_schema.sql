@@ -199,3 +199,16 @@ ALTER TABLE signals ADD COLUMN IF NOT EXISTS ts timestamptz,
     ADD COLUMN IF NOT EXISTS drivers jsonb, ADD COLUMN IF NOT EXISTS exit_at timestamptz,
     ADD COLUMN IF NOT EXISTS model_version text;
 ALTER TABLE alerts ADD COLUMN IF NOT EXISTS exit_at timestamptz;
+
+-- Trained models published from the HPC (src/publish_models.py). The dashboard reads metrics from model_runs;
+-- src/predict.py loads the newest model_artifacts version. Only trusted machines should hold write access:
+-- model files are Python pickles and are executed when loaded.
+CREATE TABLE IF NOT EXISTS model_runs (
+    version text PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(),
+    trained_through date, metrics jsonb NOT NULL, meta jsonb NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_artifacts (
+    version text NOT NULL REFERENCES model_runs (version) ON DELETE CASCADE,
+    name text NOT NULL, content bytea NOT NULL, sha256 text NOT NULL,
+    PRIMARY KEY (version, name)
+);
