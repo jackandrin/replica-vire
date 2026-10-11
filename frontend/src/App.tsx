@@ -229,7 +229,7 @@ export default function App() {
   const goHome = () => { setSelected(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   return <div className="app"><Header onHome={goHome} />
     {selected ? <StockAnalysis ticker={selected} onBack={() => { setSelected(null); scrollToId('screener'); }} /> : <main>
-      {apiError && <div className="connection-error" role="alert"><b>Backend unavailable:</b> {apiError}. Start the Python API and verify TigerData is configured. <button className="button secondary" onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}
+      {apiError && <div className="connection-error" role="alert"><b>Backend unavailable:</b> {apiError}. {apiError.includes("TigerData isn't configured") ? "Set TIGER_DATABASE_URL in the API service's Vercel Environment Variables and redeploy." : 'Check that the Python API is running and reachable.'} <button className="button secondary" onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}
       <Hero overview={overview} connected={!!overview} />
       <Screener stocks={overview?.stocks ?? []} loading={loading} onSelect={s => { setSelected(s.ticker); window.scrollTo(0, 0); }} />
       <ModelPerformance /><Methodology /><About />
