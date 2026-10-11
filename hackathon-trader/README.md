@@ -32,8 +32,9 @@ direction vector → recommendations / Alpaca paper orders → React dashboard**
 | Training / evaluation | `train.py`, `evaluate.py`, `splits.py` |
 | Live inference | `predict.py` → `signals` table |
 | Decisions, alerts, paper orders | `signals.py`, `autotrade.py` |
+| Dashboard portfolios (setup → generated portfolio → live paper trades) | `portfolio.py` |
 | Live cycle | `run_cycle.py` + `deploy/hackathon-cycle.timer` |
-| Dashboard API | `web_api.py` (frontend in `../frontend`) |
+| Dashboard API | `web_api.py` (frontend in `../frontend`; `/` is research, `/dashboard` is the paper-trading dashboard) |
 
 ## Setup
 
@@ -66,6 +67,7 @@ FINRA short-volume files need no key.
 | Publish a trained model to Tiger Data (website + bot use it) | `python -m src.publish_models` |
 | Predict latest bar (newest published model) | `python -m src.predict` |
 | Recommendations / paper orders | `python -m src.autotrade [--no-orders]` |
+| Dashboard portfolios: reconcile fills, rebalance, snapshot | `python -m src.portfolio [--dry-run]` (also a step of `run_cycle`) |
 | Live cycle | `python -m src.run_cycle [--dry-run]` |
 | Everything on one machine | `bash scripts/run_all.sh [--place]` |
 | API / dashboard | `python -m uvicorn src.web_api:app --port 8000` and `cd ../frontend && npm run dev` |
@@ -97,10 +99,48 @@ strongest allowed horizon becomes the direction vector `(expected %, timeframe)`
 min $ to max $ with height. Horizons that exit the same session (day trades) need `day_trade_min_height`.
 Long/short/both filters, sector filters, max positions, planned exits at the horizon, closes on flipped signals.
 
+## Dashboard portfolios (live paper trading)
+
+The `/dashboard` page replaces backtests with real Alpaca **paper** trades:
+
+1. The user finishes the setup form (budget, risk, horizon, sectors) → `POST /api/portfolios`.
+2. The server picks long-only targets from the latest `signals` (score = conviction − penalty·σ; Conservative equal
+   weight, Balanced rank-linear, Growth rank-squared; sector filter falls back to all sectors if < 3 stocks match),
+   stores the portfolio and submits the initial notional market buys to Alpaca. If no stock has a long signal the
+   portfolio stays in cash and says so.
+3. The response contains a secret token **once**; the browser keeps `{id, token}` in `localStorage` and sends it as
+   `Authorization: Bearer <token>` to `GET /api/portfolios/{id}` (targets, real positions, order states, value vs
+   SPY) and `POST /api/portfolios/{id}/close` ("Start over": cancels unfilled buys, sells holdings, stops managing).
+   Only `sha256(token)` is stored. A wrong id and a wrong token both return 404.
+4. The daily `run_cycle` step (`python -m src.portfolio`) reconciles fills, rebalances each active portfolio once per
+   new signal date (2 % / $1 drift band, one order per symbol, idempotent client order ids), and writes a value
+   snapshot used for the chart.
+
+All portfolios share one Alpaca paper account; each has a **virtual ledger** (`portfolio_orders`) that is the source
+of truth for its cash and positions. `autotrade.py` treats ledger shares as reserved and never sells them. For full
+isolation set `ALPACA_PORTFOLIO_API_KEY` / `ALPACA_PORTFOLIO_API_SECRET` to a second paper account.
+New tables: `portfolios`, `portfolio_orders`, `portfolio_snapshots` (re-run `python -m src.init_db --tiger`).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ALPACA_API_KEY` / `ALPACA_API_SECRET` | — | must also be set on the API host (Vercel), which now submits the initial orders |
+| `ALPACA_PORTFOLIO_API_KEY` / `_SECRET` | the keys above | optional dedicated paper account for dashboard portfolios |
+| `TRADING_ENABLED` | `1` | `0` creates portfolios but submits no orders |
+| `PORTFOLIO_MAX_BUDGET` | `10000` | max budget per portfolio (min is $10) |
+| `PORTFOLIO_MAX_TOTAL_USD` | `100000` | cap on total active budgets |
+| `PORTFOLIO_MAX_PER_CLIENT_HOUR` | `5` | portfolios per connection per hour |
+| `PORTFOLIO_MAX_PER_DAY` | `200` | portfolios created per day |
+
+Orders are DAY market orders, so outside market hours they queue and fill at the next open (the dashboard says so).
+Creation needs signals from the last 5 days. Backtest and held-out model evaluation remain on the research site
+(`/api/performance`), not on the dashboard.
+
 ## Safety
 
 - Paper only: `TradingClient(..., paper=True)` is hard-coded. `TRADING_ENABLED=0` in `.env` blocks all orders.
-- The website never talks to Alpaca: it only queues alerts; the worker executes them.
+- Alerts from the website are only queued and executed by the worker. The one exception is dashboard portfolio
+  creation, where the public API submits that portfolio's initial paper orders; it is rate-limited per connection
+  and per day, capped by budget and total capital, and requires enough paper buying power.
 - `run_cycle` stops before trading if bars or predictions fail; `autotrade` refuses new positions on signals
   older than 3 hours.
 

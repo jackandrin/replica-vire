@@ -1,9 +1,11 @@
 """JSON API for ReplicaVire's React frontend.
 
 Run from hackathon-trader/: python -m uvicorn src.web_api:app --host 127.0.0.1 --port 8000
-Uses the EXISTING TigerData tables and model evaluation artifacts, not demo values.
-No Alpaca trading calls, API tokens, database URLs, or secrets are returned.
+Research endpoints use the EXISTING TigerData tables and model evaluation artifacts, not demo values.
+No API tokens, database URLs, or secrets are returned.
 Write endpoints (settings, alert execute/dismiss) require the passphrase session cookie.
+Portfolio endpoints (/api/portfolios) are public but token-protected: creating one generates a portfolio from the
+latest model signals and places Alpaca PAPER orders (src/portfolio.py); reading one needs its secret bearer token.
 """
 from __future__ import annotations
 
@@ -16,10 +18,11 @@ import time
 from datetime import date, datetime
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import portfolio as portfolios
 from .common import ROOT, cfg, tiger
 from .sectors import GICS_SECTORS, SYMBOLS
 
@@ -509,3 +512,79 @@ def execute_alert(alert_id: int, request: Request):
 @app.post("/api/alerts/{alert_id}/dismiss")
 def dismiss_alert(alert_id: int, request: Request):
     return _set_alert(alert_id, "dismissed", request)
+
+
+# ------------------------------------------------------------------ live paper portfolios (src/portfolio.py)
+class PortfolioIn(BaseModel):
+    budget: float
+    risk: str = Field(max_length=20)
+    horizon: str = Field(max_length=20)
+    sectors: list[str] = Field(default_factory=list, max_length=12)
+
+
+def _client_hash(request: Request) -> str:
+    """Opaque per-connection id for rate limiting (the raw address is never stored)."""
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+    return hashlib.sha256(f"rv-client:{ip}".encode()).hexdigest()[:32]
+
+
+@app.post("/api/portfolios", status_code=201)
+def create_portfolio(body: PortfolioIn, request: Request, response: Response):
+    """Generate a portfolio from the onboarding profile and place its initial paper buys.
+    The secret token is returned ONCE; the browser keeps it. Only its hash is stored."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with tiger() as conn, conn.cursor() as cur:
+            pid, token = portfolios.create_portfolio(cur, body.model_dump(), _client_hash(request))
+            data = portfolios.view(cur, pid)
+    except portfolios.PortfolioError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from None
+    except Exception as exc:
+        raise db_error(exc) from None
+    return clean({**data, "token": token})
+
+
+def _bearer(portfolio_id: str, authorization: str) -> str:
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip() or len(portfolio_id) > 40:
+        raise HTTPException(status_code=401, detail="Missing portfolio token")
+    return token.strip()
+
+
+def _owned(cur, portfolio_id: str, token: str) -> None:
+    """404 (never 403) for a wrong id OR token, so ids can't be probed."""
+    if not portfolios.token_ok(cur, portfolio_id, token):
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+
+@app.get("/api/portfolios/{portfolio_id}")
+def get_portfolio(portfolio_id: str, response: Response, authorization: str = Header(default="")):
+    response.headers["Cache-Control"] = "no-store"
+    token = _bearer(portfolio_id, authorization)
+    try:
+        with tiger() as conn, conn.cursor() as cur:
+            _owned(cur, portfolio_id, token)
+            portfolios.refresh(cur, portfolio_id)
+            data = portfolios.view(cur, portfolio_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise db_error(exc) from None
+    return clean(data)
+
+
+@app.post("/api/portfolios/{portfolio_id}/close")
+def close_portfolio(portfolio_id: str, response: Response, authorization: str = Header(default="")):
+    """Start over: stop managing this portfolio and sell what it holds (orders queue until the market opens)."""
+    response.headers["Cache-Control"] = "no-store"
+    token = _bearer(portfolio_id, authorization)
+    try:
+        with tiger() as conn, conn.cursor() as cur:
+            _owned(cur, portfolio_id, token)
+            portfolios.close(cur, portfolio_id)
+            data = portfolios.view(cur, portfolio_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise db_error(exc) from None
+    return clean(data)
