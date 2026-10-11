@@ -8,8 +8,7 @@
     "api": {
       "root": "hackathon-trader",
       "runtime": "python",
-      "entrypoint": "src/web_api.py",
-      "buildCommand": "pip install -r requirements.txt -r requirements-web.txt"
+      "entrypoint": "src/web_api.py"
     }
   },
   "rewrites": [
