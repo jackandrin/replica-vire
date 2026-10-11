@@ -30,7 +30,7 @@ if (-not $NoTorch) {
 }
 
 Step "Installing requirements"
-& $py -m pip install -r requirements.txt; Check "requirements"
+& $py -m pip install -r requirements-pipeline.txt; Check "requirements"
 
 Step "Preparing .env and folders"
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env" }

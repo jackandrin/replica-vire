@@ -1,6 +1,4 @@
-# Additional packages for the read-only React dashboard API.
-# Install after requirements.txt (which includes psycopg2-binary and python-dotenv).
-fastapi>=0.115,<1
-uvicorn>=0.30,<1
+# Kept for backwards compatibility. fastapi/uvicorn are now in requirements.txt.
+-r requirements.txt
 # Optional tests of the API endpoints
 httpx>=0.27,<1

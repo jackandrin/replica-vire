@@ -1,11 +1,12 @@
 """Shared helpers: config, env, logging, TigerData (Postgres) access, upsert."""
+from __future__ import annotations
+
 import logging
 import os
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
-import pandas as pd
 import psycopg2
 import psycopg2.extras
 import yaml
@@ -13,8 +14,12 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+# Serverless filesystems (e.g. Vercel) are read-only; local folders are optional there.
 for _d in ("data", "results", "models", "logs"):
-    (ROOT / _d).mkdir(exist_ok=True)
+    try:
+        (ROOT / _d).mkdir(exist_ok=True)
+    except OSError:
+        pass
 
 
 @lru_cache(maxsize=1)
@@ -49,14 +54,15 @@ def tiger():
         conn.close()
 
 
-def query_df(sql: str, params=None) -> pd.DataFrame:
+def query_df(sql: str, params=None) -> "pd.DataFrame":
+    import pandas as pd  # lazy: the web API does not need pandas
     with tiger() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         cols = [c.name for c in cur.description]
         return pd.DataFrame(cur.fetchall(), columns=cols)
 
 
-def upsert(conn, table: str, df: pd.DataFrame, keys: list) -> int:
+def upsert(conn, table: str, df: "pd.DataFrame", keys: list) -> int:
     """INSERT ... ON CONFLICT (keys) DO UPDATE. Columns not present in df are left untouched."""
     if df.empty:
         return 0

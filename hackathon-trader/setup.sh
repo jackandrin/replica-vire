@@ -60,7 +60,7 @@ if [ "$NO_TORCH" -eq 0 ]; then
 fi
 
 say "Installing Python requirements"
-pip install -r requirements.txt
+pip install -r requirements-pipeline.txt
 
 say "Preparing .env and folders"
 [ -f .env ] || cp .env.example .env
