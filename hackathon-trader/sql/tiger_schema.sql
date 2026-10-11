@@ -212,3 +212,38 @@ CREATE TABLE IF NOT EXISTS model_artifacts (
     name text NOT NULL, content bytea NOT NULL, sha256 text NOT NULL,
     PRIMARY KEY (version, name)
 );
+
+-- Live paper portfolios built from the onboarding form. All portfolios share ONE Alpaca paper account:
+-- portfolio_orders is the virtual ledger that attributes fills to each portfolio (positions = sum of fills).
+-- The browser keeps the secret token and only its sha256 is stored here.
+CREATE TABLE IF NOT EXISTS portfolios (
+    id text PRIMARY KEY,
+    token_hash text NOT NULL,
+    budget double precision NOT NULL,
+    risk text NOT NULL, horizon text, sectors jsonb NOT NULL DEFAULT '[]'::jsonb,
+    targets jsonb NOT NULL DEFAULT '[]'::jsonb,
+    status text NOT NULL DEFAULT 'active',
+    spy_start double precision,
+    last_rebalance date,
+    client_hash text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS portfolios_created ON portfolios (created_at);
+
+CREATE TABLE IF NOT EXISTS portfolio_orders (
+    client_order_id text PRIMARY KEY,
+    portfolio_id text NOT NULL REFERENCES portfolios (id) ON DELETE CASCADE,
+    alpaca_order_id text, symbol text NOT NULL, side text NOT NULL,
+    notional double precision, qty double precision,
+    filled_qty double precision NOT NULL DEFAULT 0, filled_avg_price double precision,
+    status text, reason text, asof date,
+    created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS portfolio_orders_pf ON portfolio_orders (portfolio_id, created_at);
+
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    portfolio_id text NOT NULL REFERENCES portfolios (id) ON DELETE CASCADE,
+    asof date NOT NULL,
+    value double precision NOT NULL, cash double precision NOT NULL, spy_price double precision,
+    PRIMARY KEY (portfolio_id, asof)
+);

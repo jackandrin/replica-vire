@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from .common import cfg, env, get_logger, query_df, tiger, upsert
+from .portfolio import reserved_positions
 from .sectors import SYMBOLS
 from .signals import plan_actions
 
@@ -52,18 +53,29 @@ def due_exits(held: dict) -> set:
     return {r.symbol for r in d.itertuples() if pd.notna(r.exit_at) and pd.Timestamp(r.exit_at) <= now}
 
 
-def execute(tc, a: dict, price: float, asof) -> str:
-    """Place one paper order and log it in `orders`. Returns the Alpaca status."""
+def execute(tc, a: dict, price: float, asof, keep: dict | None = None) -> str:
+    """Place one paper order and log it in `orders`. Returns the Alpaca status.
+    keep: shares per symbol that belong to user portfolios (src/portfolio.py) and must not be touched."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
+    keep = keep or {}
     coid = f"rv-{asof}-{a['symbol']}-{uuid.uuid4().hex[:6]}"
     act = a["action"]
     if act in ("SELL", "COVER"):
-        o = tc.close_position(a["symbol"])
+        if keep.get(a["symbol"]) and act == "SELL":  # close only our own share of a shared position
+            own = float(tc.get_open_position(a["symbol"]).qty) - keep[a["symbol"]]
+            if own <= 1e-6:
+                return "skipped: nothing of our own to sell"
+            o = tc.submit_order(MarketOrderRequest(symbol=a["symbol"], qty=round(own, 6), side=OrderSide.SELL,
+                                                   time_in_force=TimeInForce.DAY, client_order_id=coid))
+        else:
+            o = tc.close_position(a["symbol"])
     elif act == "BUY":
         o = tc.submit_order(MarketOrderRequest(symbol=a["symbol"], notional=round(a["size_usd"], 2),
                                                side=OrderSide.BUY, time_in_force=TimeInForce.DAY, client_order_id=coid))
     else:  # SHORT: Alpaca does not allow fractional shorts -> whole shares
+        if keep.get(a["symbol"]):  # a short would net against the portfolios' long shares
+            return "skipped: symbol is held by user portfolios"
         qty = math.floor(a["size_usd"] / price) if price else 0
         if qty < 1:
             return "skipped: size below one share"
@@ -92,7 +104,14 @@ def main(argv=None):
 
     from alpaca.trading.client import TradingClient
     tc = TradingClient(env("ALPACA_API_KEY"), env("ALPACA_API_SECRET"), paper=True)
-    held = {x.symbol: float(x.qty) for x in tc.get_all_positions()}
+    try:  # user portfolios share this paper account: the trader must see only its own shares
+        with tiger() as conn, conn.cursor() as cur:
+            keep = reserved_positions(cur)
+    except Exception as e:  # noqa: BLE001  tables not created yet -> no portfolios
+        log.warning("portfolio ledger unavailable (%s); assuming none", e)
+        keep = {}
+    held = {x.symbol: float(x.qty) - keep.get(x.symbol, 0.0) for x in tc.get_all_positions()}
+    held = {s: q for s, q in held.items() if abs(q) > 1e-6}
     sectors = {s: v[1] for s, v in SYMBOLS.items()}
     actions = plan_actions(sig, held, st, opened_today(held), sectors, due_exits(held))
     now = datetime.now(timezone.utc)
@@ -129,7 +148,7 @@ def main(argv=None):
     price = dict(zip(prices.symbol, prices.close))
     for r in todo.itertuples():
         try:
-            status = execute(tc, r._asdict(), price.get(r.symbol), asof)
+            status = execute(tc, r._asdict(), price.get(r.symbol), asof, keep)
             new, detail = ("error", status) if status.startswith("skipped") else ("executed", status)
         except Exception as e:  # noqa: BLE001
             new, detail = "error", str(e)[:200]

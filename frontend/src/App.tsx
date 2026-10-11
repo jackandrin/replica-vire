@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import TradingDashboard from './trading/TradingDashboard';
 import { apiGet, apiSend, ApiError, type Overview, type Stock, type StockDetail, type Performance, type Replay, type Alert, type Settings, type Session, type DirectionMode, type Horizons, type Driver, type RegressorOutput, type SentimentEvent, type HorizonMetrics } from './api';
 
 const HORIZON_ORDER = ['6h', '12h', '18h', '1d', '3d', '5d'];
@@ -38,17 +37,17 @@ function Badge({ children, blush = false }: { children: React.ReactNode; blush?:
 function Metric({ label, value, note, toneClass = 'dark' }: { label: string; value: string; note: string; toneClass?: string }) {
   return <div className="metric"><span className="eyebrow">{label}</span><strong className={`mono ${toneClass}`}>{value}</strong><small>{note}</small></div>;
 }
-function Header({ onHome, onLaunch }: { onHome: () => void; onLaunch: () => void }) {
+function Header({ onHome }: { onHome: () => void }) {
   const go = (id: string) => { onHome(); scrollToId(id); };
   return <header className="site-header">
     <button className="logo" onClick={onHome} aria-label="ReplicaVire home"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><span className="wordmark">ReplicaVire</span><span className="descriptor">EQUITY RESEARCH</span></button>
     <nav className="desktop-nav" aria-label="Main navigation">
-      <button onClick={onHome}>Dashboard</button><button onClick={() => go('screener')}>Stock Screener</button>
+      <button onClick={onHome}>Overview</button><button onClick={() => go('screener')}>Stock Screener</button>
       <button onClick={() => go('recommendations')}>Recommendations</button><button onClick={() => go('autotrading')}>Auto-Trading</button>
       <button onClick={() => go('performance')}>Model Performance</button><button onClick={() => go('methodology')}>Methodology</button>
       <button onClick={() => go('about')}>About</button>
     </nav>
-    <div className="header-actions"><button className="button dark launch" onClick={onLaunch}>Launch Dashboard</button></div>
+    <div className="header-actions"><a className="button dark launch" href="/dashboard">Launch Dashboard</a></div>
   </header>;
 }
 function TrendChart({ values, labels, title, height = 180, compare }: { values: (number | null)[]; labels?: string[]; title: string; height?: number; compare?: (number | null)[] }) {
@@ -469,7 +468,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [trading, setTrading] = useState(false);
   useEffect(() => { const ctrl = new AbortController(); setLoading(true); setApiError('');
     apiGet<Overview>('/api/overview', ctrl.signal).then(setOverview).catch(e => { if (!ctrl.signal.aborted) { setOverview(null); setApiError(e.message); } }).finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
     return () => ctrl.abort();
@@ -526,9 +524,8 @@ export default function App() {
   const sectors = overview?.sectors?.length ? overview.sectors : GICS_SECTORS;
 
   const goHome = () => { setSelected(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const toastStack = <div className="toast-stack" aria-live="polite">{toasts.map(t => <ToastItem key={t.alert.id} toast={t} onClose={() => closeToast(t.alert.id)} onExecute={() => executeAlert(t.alert.id)} onDismiss={() => dismissAlert(t.alert.id)} onDetails={() => { closeToast(t.alert.id); setTrading(false); openStock(t.alert.symbol); }} />)}</div>;
-  if (trading) return <>{toastStack}<TradingDashboard stocks={overview?.stocks ?? []} loading={loading} error={apiError} onExit={() => { setTrading(false); window.scrollTo(0, 0); }} /></>;
-  return <div className="app"><Header onHome={goHome} onLaunch={() => { setTrading(true); window.scrollTo(0, 0); }} />
+  const toastStack = <div className="toast-stack" aria-live="polite">{toasts.map(t => <ToastItem key={t.alert.id} toast={t} onClose={() => closeToast(t.alert.id)} onExecute={() => executeAlert(t.alert.id)} onDismiss={() =>   dismissAlert(t.alert.id)} onDetails={() => { closeToast(t.alert.id); openStock(t.alert.symbol); }} />)}</div>;
+    return <div className="app"><Header onHome={goHome} />
     {toastStack}
     {selected ? <StockAnalysis ticker={selected} onBack={() => { setSelected(null); scrollToId('screener'); }} /> : <main>
       {apiError && <div className="connection-error" role="alert"><b>Backend unavailable:</b> {apiError}. Start the Python API and verify TigerData is configured. <button className="button secondary" onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}

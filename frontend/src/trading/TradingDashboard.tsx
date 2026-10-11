@@ -1,22 +1,28 @@
-import { useEffect, useMemo, useState } from "react"
-import { apiGet, type Performance as PerformanceData, type Stock } from "../api"
-import { buildPortfolio, sigmaOf, type Holding } from "./portfolio"
+import { useCallback, useEffect, useState } from "react"
 import {
-  Badge,
-  Button,
-  Icon,
-  Onboarding,
-  Shell,
-  type Profile,
-  type Screen,
-} from "./parts"
+  ApiError,
+  closePortfolio,
+  createPortfolio,
+  fetchPortfolio,
+  rememberPortfolio,
+  storedPortfolio,
+  type LivePortfolio,
+  type PortfolioOrder,
+  type PortfolioPoint,
+  type PortfolioPosition,
+  type PortfolioTarget,
+} from "../api"
+import { Badge, Button, Icon, Onboarding, Shell, type Profile, type Screen } from "./parts"
 import "./trading.css"
 
-const usd = (v: number) => `$${v.toFixed(2)}`
+const COLORS = ["#23684f", "#769b7f", "#c27b68", "#b79b5f", "#668490", "#9aa49e"]
+const REFRESH_MS = 60_000
+
+const usd = (v: number | null | undefined) =>
+  v == null || !Number.isFinite(v) ? "—" : `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`
 const pct = (v: number | null | undefined, digits = 2) =>
   v == null || !Number.isFinite(v) ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(digits)}%`
-const tone = (v: number | null | undefined) =>
-  v == null ? "" : v < 0 ? "negative" : "positive"
+const tone = (v: number | null | undefined) => (v == null ? "" : v < 0 ? "negative" : "positive")
 const DEFAULT_PROFILE: Profile = {
   budget: 250,
   risk: "Balanced",
@@ -24,75 +30,70 @@ const DEFAULT_PROFILE: Profile = {
   sectors: ["No preference"],
 }
 
-function Donut({ holdings, budget }: { holdings: Holding[]; budget: number }) {
+function Donut({ targets, value }: { targets: PortfolioTarget[]; value: number }) {
   let offset = 25
   return (
-    <svg
-      className="donut"
-      viewBox="0 0 42 42"
-      role="img"
-      aria-label="Portfolio allocation chart"
-    >
+    <svg className="donut" viewBox="0 0 42 42" role="img" aria-label="Target allocation chart">
       <circle cx="21" cy="21" r="15.9155" fill="none" stroke="#ebe9e2" strokeWidth="5" />
-      {holdings.map((item) => {
+      {targets.map((t, i) => {
         const current = offset
-        offset -= item.weight
+        offset -= t.weight
         return (
           <circle
-            key={item.stock.ticker}
+            key={t.symbol}
             cx="21"
             cy="21"
             r="15.9155"
             fill="none"
-            stroke={item.color}
+            stroke={COLORS[i % COLORS.length]}
             strokeWidth="5"
-            strokeDasharray={`${item.weight} ${100 - item.weight}`}
+            strokeDasharray={`${t.weight} ${100 - t.weight}`}
             strokeDashoffset={current}
           />
         )
       })}
       <text x="21" y="19" textAnchor="middle" className="donut-label">
-        BUDGET
+        VALUE
       </text>
       <text x="21" y="25" textAnchor="middle" className="donut-value">
-        ${Math.round(budget)}
+        ${Math.round(value)}
       </text>
     </svg>
   )
 }
 
-function PickCard({ holding }: { holding: Holding }) {
+function PickCard({
+  target,
+  color,
+  position,
+}: {
+  target: PortfolioTarget
+  color: string
+  position?: PortfolioPosition
+}) {
   const [open, setOpen] = useState(false)
-  const s = holding.stock
   return (
     <article className={`pick-card ${open ? "open" : ""}`}>
       <button className="pick-main" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span className="ticker-tile" style={{ backgroundColor: holding.color }}>
-          {s.ticker.slice(0, 2)}
+        <span className="ticker-tile" style={{ backgroundColor: color }}>
+          {target.symbol.slice(0, 2)}
         </span>
         <span className="pick-identity">
           <span>
-            <strong>{s.ticker}</strong>
-            <Badge>{s.sector}</Badge>
+            <strong>{target.symbol}</strong>
+            <Badge>{target.sector}</Badge>
           </span>
-          <small>{s.company}</small>
+          <small>{target.company}</small>
         </span>
         <span className="pick-allocation">
-          <small>Allocation</small>
+          <small>Target</small>
           <strong>
-            {holding.weight.toFixed(0)}% <em>{usd(holding.amount)}</em>
+            {target.weight.toFixed(0)}% <em>{usd(target.target_usd)}</em>
           </strong>
         </span>
-        {holding.spark ? (
-          <svg className="sparkline" viewBox="0 0 96 42" preserveAspectRatio="none">
-            <path d={holding.spark} fill="none" stroke={holding.color} strokeWidth="2.2" strokeLinecap="round" />
-            <path d={`${holding.spark} L94 42 L2 42 Z`} fill={holding.color} opacity=".08" />
-          </svg>
-        ) : (
-          <span className="sparkline" />
-        )}
+        <span className="sparkline" />
         <Badge tone="green">
-          <Icon name="sparkle" size={13} /> {holding.score}
+          <Icon name="sparkle" size={13} /> {target.score}
         </Badge>
         <span className="expand-icon">
           <Icon name="chevron" size={18} />
@@ -100,27 +101,25 @@ function PickCard({ holding }: { holding: Holding }) {
       </button>
       <div className="pick-reason">
         <span>Why it fits</span>
-        <p>{holding.reason}</p>
+        <p>{target.reason}</p>
       </div>
       {open && (
         <div className="pick-details">
           <div>
-            <small>News sentiment (0-100)</small>
-            <strong className={tone(s.sentiment_level == null ? null : s.sentiment_level - 50)}>
-              {s.sentiment_level == null ? "—" : s.sentiment_level.toFixed(0)}
-            </strong>
+            <small>Held now</small>
+            <strong>{position ? `${position.qty.toFixed(4)} sh` : "Not filled yet"}</strong>
           </div>
           <div>
-            <small>Expected move ({s.timeframe ?? "—"})</small>
-            <strong className={tone(s.expected_pct)}>{pct(s.expected_pct)}</strong>
+            <small>Market value</small>
+            <strong>{usd(position?.market_value)}</strong>
           </div>
           <div>
-            <small>Uncertainty (±1σ)</small>
-            <strong>{sigmaOf(s) == null ? "—" : `±${(sigmaOf(s) as number).toFixed(2)}%`}</strong>
+            <small>Unrealised P&amp;L</small>
+            <strong className={tone(position?.pnl)}>{position ? pct(position.pnl_pct) : "—"}</strong>
           </div>
           <p>
-            Last close {s.price == null ? "unavailable" : usd(s.price)} ({s.price_date?.slice(0, 10) ?? "no date"}).
-            Forecasts are raw-return estimates over the chosen timeframe, not price targets.
+            Last close {usd(target.price)}. Orders are placed on the Alpaca paper account and fill when the market is
+            open; the portfolio is re-checked after each daily model run.
           </p>
         </div>
       )}
@@ -129,31 +128,25 @@ function PickCard({ holding }: { holding: Holding }) {
 }
 
 function Results({
-  profile,
-  stocks,
-  loading,
-  error,
+  portfolio,
   onStart,
-  onEdit,
+  onNew,
 }: {
-  profile: Profile
-  stocks: Stock[]
-  loading: boolean
-  error: string
+  portfolio: LivePortfolio
   onStart: () => void
-  onEdit: () => void
+  onNew: () => void
 }) {
-  const portfolio = useMemo(() => buildPortfolio(stocks, profile), [stocks, profile])
-  const { holdings } = portfolio
+  const { profile, targets, summary, positions, notes } = portfolio
+  const bySymbol = new Map(positions.map((p) => [p.symbol, p]))
   return (
     <div className="page">
       <div className="page-heading result-heading">
         <div>
-          <span className="eyebrow">Your model-built portfolio</span>
+          <span className="eyebrow">Your live paper portfolio</span>
           <h1>{profile.risk} picks, built for you.</h1>
           <p>
-            Ranked by the fusion network's conviction, adjusted for forecast uncertainty. Stocks only; the
-            tracked universe contains no ETFs or bonds.
+            Generated by the server from the latest model signals and traded on an Alpaca paper account. Stocks
+            only; the tracked universe contains no ETFs or bonds.
           </p>
         </div>
         <div className="profile-summary">
@@ -169,46 +162,45 @@ function Results({
             <small>Time horizon</small>
             <strong>{profile.horizon}</strong>
           </div>
-          <Button kind="ghost" onClick={onEdit}>
-            <Icon name="edit" size={16} /> Edit
+          <Button kind="ghost" onClick={onNew}>
+            <Icon name="edit" size={16} /> Start over
           </Button>
         </div>
       </div>
-      {loading ? (
-        <div className="allocation-card">Loading live research data…</div>
-      ) : error ? (
-        <div className="allocation-card" role="alert">
-          <strong>Backend unavailable:</strong> {error}. No portfolio is shown without real data.
+      {portfolio.status === "closed" && (
+        <div className="allocation-card" role="status">
+          This portfolio was closed. Its remaining positions are being sold.
         </div>
-      ) : holdings.length === 0 ? (
-        <div className="allocation-card">
-          No stocks currently have a date-matched model forecast, so a portfolio can't be built.
-        </div>
-      ) : (
-        <>
-          {portfolio.sectorFallback && (
-            <div className="allocation-card" role="status">
-              Fewer than three forecasted stocks match your sector choices, so all sectors were considered.
+      )}
+      {notes.length > 0 && (
+        <div className="live-notes" role="status">
+          {notes.map((n) => (
+            <div key={n}>
+              <Icon name="clock" size={16} /> {n}
             </div>
-          )}
+          ))}
+        </div>
+      )}
+      {targets.length > 0 && (
+        <>
           <section className="allocation-card">
             <div className="section-title">
               <div>
                 <span className="section-index">01</span>
-                <h2>Your allocation</h2>
+                <h2>Target allocation</h2>
               </div>
-              <Badge tone="blue">{holdings.length} holdings</Badge>
+              <Badge tone="blue">{targets.length} holdings</Badge>
             </div>
             <div className="allocation-content">
-              <Donut holdings={holdings} budget={profile.budget} />
+              <Donut targets={targets} value={summary.value} />
               <div className="allocation-legend">
-                {holdings.map((item) => (
-                  <div key={item.stock.ticker}>
-                    <span className="legend-color" style={{ backgroundColor: item.color }} />
-                    <strong>{item.stock.ticker}</strong>
-                    <span>{item.stock.company}</span>
-                    <em>{item.weight.toFixed(0)}%</em>
-                    <small>{usd(item.amount)}</small>
+                {targets.map((t, i) => (
+                  <div key={t.symbol}>
+                    <span className="legend-color" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+                    <strong>{t.symbol}</strong>
+                    <span>{t.company}</span>
+                    <em>{t.weight.toFixed(0)}%</em>
+                    <small>{usd(t.target_usd)}</small>
                   </div>
                 ))}
               </div>
@@ -220,47 +212,51 @@ function Results({
                 <span className="section-index">02</span>
                 <h2>What’s inside</h2>
               </div>
-              <p>Tap any holding to see the signals behind it.</p>
+              <p>Tap any holding to see its fill status.</p>
             </div>
             <div className="pick-list">
-              {holdings.map((holding) => (
-                <PickCard key={holding.stock.ticker} holding={holding} />
+              {targets.map((t, i) => (
+                <PickCard key={t.symbol} target={t} color={COLORS[i % COLORS.length]} position={bySymbol.get(t.symbol)} />
               ))}
             </div>
           </section>
-          <div className="start-card">
-            <div className="start-icon">
-              <Icon name="briefcase" size={25} />
-            </div>
-            <div>
-              <span className="eyebrow">Ready when you are</span>
-              <h2>See how the strategy has performed.</h2>
-              <p>Review held-out backtest results for the underlying models against SPY.</p>
-            </div>
-            <Button onClick={onStart}>
-              View performance <Icon name="arrow" />
-            </Button>
-          </div>
         </>
       )}
+      <div className="start-card">
+        <div className="start-icon">
+          <Icon name="briefcase" size={25} />
+        </div>
+        <div>
+          <span className="eyebrow">Live results</span>
+          <h2>Follow how it is actually doing.</h2>
+          <p>Real paper-trade fills, positions and value against SPY since you started.</p>
+        </div>
+        <Button onClick={onStart}>
+          View performance <Icon name="arrow" />
+        </Button>
+      </div>
     </div>
   )
 }
 
-function PerformanceChart({ curve }: { curve: NonNullable<PerformanceData["curve"]> }) {
+function ValueChart({ points }: { points: PortfolioPoint[] }) {
   const w = 840
   const h = 220
-  const a = curve.map((p) => (p.nn ?? 0) * 100)
-  const m = curve.map((p) => (p.spy ?? 0) * 100)
-  const all = [...a, ...m, 0]
+  const a = points.map((p) => p.return_pct)
+  const m = points.map((p) => p.spy_return_pct)
+  const all = [...a, ...m.filter((v): v is number => v != null), 0]
   const min = Math.min(...all)
   const max = Math.max(...all)
   const span = max - min || 1
-  const x = (i: number) => (w * i) / Math.max(1, curve.length - 1)
+  const x = (i: number) => (w * i) / Math.max(1, points.length - 1)
   const y = (v: number) => 200 - (180 * (v - min)) / span
-  const path = (vs: number[]) => vs.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ")
+  const line = (vs: (number | null)[]) =>
+    vs
+      .map((v, i) => (v == null ? null : `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`))
+      .filter(Boolean)
+      .join(" ")
   const ticks = [0, 1, 2, 3, 4].map((i) => max - (span * i) / 4)
-  const mid = curve[Math.floor(curve.length / 2)]
+  const mid = points[Math.floor(points.length / 2)]
   return (
     <div className="chart-wrap">
       <div className="chart-y-axis">
@@ -268,174 +264,192 @@ function PerformanceChart({ curve }: { curve: NonNullable<PerformanceData["curve
           <span key={t}>{t.toFixed(1)}%</span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="performance-chart" role="img" aria-label="Cumulative backtest return, strategy versus SPY">
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="performance-chart"
+        role="img"
+        aria-label="Portfolio return since start, versus SPY"
+      >
         {[20, 65, 110, 155, 200].map((gy) => (
           <line key={gy} x1="0" y1={gy} x2={w} y2={gy} className="grid-line" />
         ))}
-        <path d={`${path(a)} L${w} ${h} L0 ${h}Z`} className="chart-area" />
-        <path d={path(m)} className="market-line" />
-        <path d={path(a)} className="portfolio-line" />
+        <path d={line(m)} className="market-line" />
+        <path d={line(a)} className="portfolio-line" />
       </svg>
       <div className="chart-x-axis">
-        <span>{curve[0].date.slice(0, 10)}</span>
+        <span>{points[0].date.slice(0, 10)}</span>
         <span>{mid.date.slice(0, 10)}</span>
-        <span>{curve[curve.length - 1].date.slice(0, 10)}</span>
+        <span>{points[points.length - 1].date.slice(0, 10)}</span>
       </div>
     </div>
   )
 }
 
-function Performance({ profile, stocks }: { profile: Profile; stocks: Stock[] }) {
-  const [data, setData] = useState<PerformanceData | null>(null)
-  const [error, setError] = useState("")
-  const [selected, setSelected] = useState<Holding | null>(null)
-  const holdings = useMemo(() => buildPortfolio(stocks, profile).holdings, [stocks, profile])
-  useEffect(() => {
-    const ctrl = new AbortController()
-    apiGet<PerformanceData>("/api/performance", ctrl.signal)
-      .then(setData)
-      .catch((e) => {
-        if (!ctrl.signal.aborted) setError(e.message)
-      })
-    return () => ctrl.abort()
-  }, [])
-  const strat = data?.backtest?.nn
-  const spy = data?.backtest?.spy
-  const pctOf = (v: number | null | undefined) => (v == null ? null : v * 100)
-  const available = data?.status === "available" && data.curve && data.curve.length > 1
-  const ahead = strat?.total_return != null && spy?.total_return != null ? 100 * (strat.total_return - spy.total_return) : null
+function OrderRow({ order }: { order: PortfolioOrder }) {
+  const fill =
+    order.filled_qty && order.filled_avg_price
+      ? `${order.filled_qty.toFixed(4)} @ ${usd(order.filled_avg_price)}`
+      : order.notional
+        ? usd(order.notional)
+        : "—"
+  return (
+    <div>
+      <span className={`trade-icon ${order.side}`}>{order.side === "buy" ? "BUY" : "SELL"}</span>
+      <p>
+        <strong>{order.symbol}</strong>
+        <small>{order.created_at.slice(0, 10)}</small>
+      </p>
+      <p>
+        <em>{fill}</em>
+        <span className={`status-pill ${order.status}`}>{order.status.replace(/_/g, " ")}</span>
+      </p>
+    </div>
+  )
+}
+
+function Performance({ portfolio }: { portfolio: LivePortfolio }) {
+  const [selected, setSelected] = useState<string | null>(null)
+  const { summary, positions, history, orders, targets } = portfolio
+  const ahead = summary.spy_return_pct == null ? null : summary.pnl_pct - summary.spy_return_pct
+  const target = targets.find((t) => t.symbol === selected)
+  const position = positions.find((p) => p.symbol === selected)
+  const sel = target ?? position
+  const idx = targets.findIndex((t) => t.symbol === selected)
   return (
     <div className="page performance-page">
       <div className="page-heading performance-heading">
         <div>
-          <span className="eyebrow">Backtest · held-out test period</span>
-          <h1>Strategy performance</h1>
+          <span className="eyebrow">Live · Alpaca paper account</span>
+          <h1>Portfolio performance</h1>
           <p>
-            Results are from the research pipeline's cost-aware backtest of the fusion network's daily long-short signals, not a
-            live paper account. Past results don't guarantee future returns.
+            These are real paper-trade fills and the latest stored prices, not a backtest. Paper results ignore some
+            real-world frictions and past results don't guarantee future returns.
           </p>
         </div>
         <div className="last-updated">
-          <span className="status-dot" /> {data?.meta?.trained_at ? `Trained ${data.meta.trained_at.slice(0, 10)}` : "Training date unavailable"}
+          <span className="status-dot" /> Refreshes every minute
         </div>
       </div>
-      {!available ? (
-        <section className="chart-card">
-          <h2>Backtest results not available yet</h2>
-          <p>{error || data?.reason || "Loading evaluation data…"}</p>
-          <p>
-            Run <code>python -m src.train</code> in <code>hackathon-trader</code> to generate them. No placeholder
-            numbers are shown.
-          </p>
-        </section>
-      ) : (
-        <>
-          <div className="kpi-grid">
-            <article>
-              <div>
-                <span>Strategy return</span>
-                <Icon name="growth" size={18} />
-              </div>
-              <strong className={tone(strat?.total_return)}>{pct(pctOf(strat?.total_return))}</strong>
-              <small>Agreement strategy, test period</small>
-            </article>
-            <article>
-              <div>
-                <span>vs. SPY</span>
-                {ahead != null && <Badge tone="blue">{ahead >= 0 ? "Ahead" : "Behind"}</Badge>}
-              </div>
-              <strong className={tone(ahead)}>{pct(ahead)}</strong>
-              <small>SPY {pct(pctOf(spy?.total_return))}</small>
-            </article>
-            <article>
-              <div>
-                <span>Sharpe ratio</span>
-                <Icon name="chart" size={18} />
-              </div>
-              <strong>{strat?.sharpe == null ? "—" : strat.sharpe.toFixed(2)}</strong>
-              <small>Non-overlapping periods</small>
-            </article>
-            <article>
-              <div>
-                <span>Max drop</span>
-                <Icon name="chart" size={18} />
-              </div>
-              <strong>{pct(pctOf(strat?.max_drawdown))}</strong>
-              <small>Worst peak-to-trough</small>
-            </article>
+      <div className="kpi-grid">
+        <article>
+          <div>
+            <span>Portfolio value</span>
+            <Icon name="briefcase" size={18} />
           </div>
-          <section className="chart-card">
-            <div className="chart-header">
-              <div>
-                <h2>Cumulative return</h2>
-                <div className="chart-legend">
-                  <span>
-                    <i className="dot-blue" />
-                    Agreement strategy
-                  </span>
-                  <span>
-                    <i className="dot-dark" />
-                    SPY
-                  </span>
-                </div>
-              </div>
+          <strong>{usd(summary.value)}</strong>
+          <small>Started with {usd(portfolio.profile.budget)}</small>
+        </article>
+        <article>
+          <div>
+            <span>Total return</span>
+            <Icon name="growth" size={18} />
+          </div>
+          <strong className={tone(summary.pnl)}>{pct(summary.pnl_pct)}</strong>
+          <small>{usd(summary.pnl)}</small>
+        </article>
+        <article>
+          <div>
+            <span>vs. SPY</span>
+            {ahead != null && <Badge tone="blue">{ahead >= 0 ? "Ahead" : "Behind"}</Badge>}
+          </div>
+          <strong className={tone(ahead)}>{pct(ahead)}</strong>
+          <small>SPY {pct(summary.spy_return_pct)} since start</small>
+        </article>
+        <article>
+          <div>
+            <span>Cash</span>
+            <Icon name="chart" size={18} />
+          </div>
+          <strong>{usd(summary.cash)}</strong>
+          <small>
+            {summary.pending_orders > 0 ? `${summary.pending_orders} order(s) queued` : `${usd(summary.invested)} invested`}
+          </small>
+        </article>
+      </div>
+      <section className="chart-card">
+        <div className="chart-header">
+          <div>
+            <h2>Return since start</h2>
+            <div className="chart-legend">
+              <span>
+                <i className="dot-blue" />
+                Your portfolio
+              </span>
+              <span>
+                <i className="dot-dark" />
+                SPY
+              </span>
             </div>
-            <PerformanceChart curve={data.curve!} />
-            <p className="paper-note">
-              Training {data.meta?.train_dates?.join(" → ") ?? "—"} · Test {data.meta?.test_dates?.join(" → ") ?? "—"}.{" "}
-              {data.meta?.caveat ?? ""}
+          </div>
+        </div>
+        {history.length > 1 ? (
+          <ValueChart points={history} />
+        ) : (
+          <p className="paper-note" style={{ justifyContent: "flex-start" }}>
+            The chart starts after the first full daily update; until then only your starting point exists.
+          </p>
+        )}
+      </section>
+      <div className="dashboard-grid">
+        <section className="holdings-card">
+          <div className="section-title">
+            <div>
+              <h2>Positions</h2>
+              <Badge>{positions.length}</Badge>
+            </div>
+            <p>Click a holding for the model's reasoning.</p>
+          </div>
+          {positions.length === 0 ? (
+            <p className="paper-note" style={{ justifyContent: "flex-start" }}>
+              No orders have filled yet. Orders placed outside market hours fill at the next open.
             </p>
-          </section>
-        </>
-      )}
-      {holdings.length > 0 && (
-        <div className="dashboard-grid">
-          <section className="holdings-card">
-            <div className="section-title">
-              <div>
-                <h2>Proposed holdings</h2>
-                <Badge>{holdings.length}</Badge>
-              </div>
-              <p>Click a holding for its model signals.</p>
-            </div>
+          ) : (
             <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
                     <th>Holding</th>
-                    <th>Amount</th>
-                    <th>Est. shares</th>
-                    <th>Last close</th>
-                    <th>1D</th>
-                    <th>Weight</th>
+                    <th>Shares</th>
+                    <th>Avg cost</th>
+                    <th>Last</th>
+                    <th>Value</th>
+                    <th>P&amp;L</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {holdings.map((h) => (
-                    <tr key={h.stock.ticker} onClick={() => setSelected(h)}>
+                  {positions.map((p) => (
+                    <tr key={p.symbol} onClick={() => setSelected(p.symbol)}>
                       <td>
-                        <span className="table-ticker">{h.stock.ticker}</span>
-                        <small>{h.stock.company}</small>
+                        <span className="table-ticker">{p.symbol}</span>
+                        <small>{p.company}</small>
                       </td>
-                      <td>{usd(h.amount)}</td>
-                      <td>{h.shares.toFixed(3)}</td>
-                      <td>{h.stock.price == null ? "—" : usd(h.stock.price)}</td>
-                      <td className={tone(h.stock.day_change_pct)}>{pct(h.stock.day_change_pct)}</td>
-                      <td>
-                        <div className="weight-bar">
-                          <span style={{ width: `${h.weight}%` }} />
-                        </div>
-                        {h.weight.toFixed(1)}%
+                      <td>{p.qty.toFixed(4)}</td>
+                      <td>{usd(p.avg_cost)}</td>
+                      <td>{usd(p.price)}</td>
+                      <td>{usd(p.market_value)}</td>
+                      <td className={tone(p.pnl)}>
+                        {usd(p.pnl)} ({pct(p.pnl_pct, 1)})
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </section>
-        </div>
-      )}
-      {selected && (
+          )}
+        </section>
+        <section className="activity-card">
+          <div className="section-title">
+            <div>
+              <h2>Orders</h2>
+            </div>
+          </div>
+          <div className="activity-list">
+            {orders.length === 0 ? <small>No orders yet.</small> : orders.slice(0, 12).map((o, i) => <OrderRow key={i} order={o} />)}
+          </div>
+        </section>
+      </div>
+      {sel && (
         <>
           <button className="panel-scrim" aria-label="Close details" onClick={() => setSelected(null)} />
           <aside className="why-panel">
@@ -444,42 +458,48 @@ function Performance({ profile, stocks }: { profile: Profile; stocks: Stock[] })
             </button>
             <span className="eyebrow">Model signals</span>
             <div className="panel-title">
-              <span className="ticker-tile" style={{ backgroundColor: selected.color }}>
-                {selected.stock.ticker.slice(0, 2)}
+              <span className="ticker-tile" style={{ backgroundColor: COLORS[Math.max(0, idx) % COLORS.length] }}>
+                {sel.symbol.slice(0, 2)}
               </span>
               <div>
-                <h2>{selected.stock.ticker}</h2>
-                <p>{selected.stock.company}</p>
+                <h2>{sel.symbol}</h2>
+                <p>{sel.company}</p>
               </div>
             </div>
-            <div className="score-block">
-              <span>
-                <Icon name="sparkle" /> Rank score
-              </span>
-              <strong>
-                {selected.score}
-                <small>/100</small>
-              </strong>
-              <div>
-                <span style={{ width: `${selected.score}%` }} />
+            {target && (
+              <div className="score-block">
+                <span>
+                  <Icon name="sparkle" /> Rank score
+                </span>
+                <strong>
+                  {target.score}
+                  <small>/100</small>
+                </strong>
+                <div>
+                  <span style={{ width: `${target.score}%` }} />
+                </div>
               </div>
-            </div>
+            )}
             <div className="panel-section">
-              <h3>Why this pick?</h3>
-              <p>{selected.reason}</p>
+              <h3>{target ? "Why this pick?" : "Why is this being sold?"}</h3>
+              <p>
+                {target
+                  ? target.reason
+                  : "The latest model run no longer ranks this stock among your portfolio's picks, so it is sold at the next rebalance."}
+              </p>
             </div>
             <div className="signal-list">
               <div>
-                <span>Expected move ({selected.stock.timeframe ?? "—"})</span>
-                <strong className={tone(selected.stock.expected_pct)}>{pct(selected.stock.expected_pct)}</strong>
+                <span>Target weight</span>
+                <strong>{target ? `${target.weight.toFixed(1)}%` : "—"}</strong>
               </div>
               <div>
-                <span>Conviction</span>
-                <strong>{selected.stock.height == null ? "—" : selected.stock.height.toFixed(1)}</strong>
+                <span>Current weight</span>
+                <strong>{position?.weight == null ? "—" : `${position.weight.toFixed(1)}%`}</strong>
               </div>
               <div>
-                <span>News items (5D)</span>
-                <strong>{selected.stock.news_count_5d ?? "—"}</strong>
+                <span>Sector</span>
+                <strong>{sel.sector}</strong>
               </div>
             </div>
             <div className="panel-note">
@@ -493,43 +513,116 @@ function Performance({ profile, stocks }: { profile: Profile; stocks: Stock[] })
   )
 }
 
-export default function TradingDashboard({
-  stocks,
-  loading,
-  error,
-  onExit,
-}: {
-  stocks: Stock[]
-  loading: boolean
-  error: string
-  onExit: () => void
-}) {
-  const [screen, setScreen] = useState<Screen>("onboarding")
-  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE)
+type Phase = "loading" | "onboarding" | "ready" | "error"
+
+export default function TradingDashboard() {
+  const [phase, setPhase] = useState<Phase>("loading")
+  const [portfolio, setPortfolio] = useState<LivePortfolio | null>(null)
+  const [screen, setScreen] = useState<Screen>("results")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const saved = storedPortfolio()
+    if (!saved) return setPhase("onboarding")
+    try {
+      setPortfolio(await fetchPortfolio(saved.id, saved.token, signal))
+      setError("")
+      setPhase("ready")
+    } catch (e) {
+      if (signal?.aborted) return
+      if (e instanceof ApiError && (e.status === 401 || e.status === 404)) {
+        rememberPortfolio(null)
+        setPortfolio(null)
+        return setPhase("onboarding")
+      }
+      setError(e instanceof Error ? e.message : "Could not load your portfolio")
+      // Keep showing the last good data on a failed refresh.
+      setPhase((p) => (p === "ready" ? "ready" : "error"))
+    }
+  }, [])
+
+  useEffect(() => {
+    const ctrl = new AbortController()
+    void load(ctrl.signal)
+    return () => ctrl.abort()
+  }, [load])
+
+  useEffect(() => {
+    if (phase !== "ready") return
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void load()
+    }, REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [phase, load])
+
+  const build = async (profile: Profile) => {
+    setBusy(true)
+    setError("")
+    try {
+      const { token, ...created } = await createPortfolio(profile)
+      rememberPortfolio({ id: created.id, token })
+      setPortfolio(created)
+      setScreen("results")
+      setPhase("ready")
+      window.scrollTo(0, 0)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not build your portfolio")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const startOver = async () => {
+    const saved = storedPortfolio()
+    if (
+      !window.confirm(
+        "Start over? This closes your current paper portfolio, sells its positions at the next market open, and lets you build a new one.",
+      )
+    )
+      return
+    try {
+      if (saved) await closePortfolio(saved.id, saved.token)
+    } catch (e) {
+      // Already gone on the server: nothing left to close.
+      if (!(e instanceof ApiError && (e.status === 401 || e.status === 404))) {
+        setError(e instanceof Error ? e.message : "Could not close the portfolio")
+        return
+      }
+    }
+    rememberPortfolio(null)
+    setPortfolio(null)
+    setError("")
+    setPhase("onboarding")
+  }
+
+  const profile: Profile = portfolio?.profile ?? DEFAULT_PROFILE
   return (
     <div className="tv">
-      <Shell screen={screen} setScreen={setScreen} onExit={onExit}>
-        {screen === "onboarding" && (
-          <Onboarding
-            initial={profile}
-            onComplete={(p) => {
-              setProfile(p)
-              setScreen("results")
-              window.scrollTo(0, 0)
-            }}
-          />
+      <Shell screen={screen} setScreen={setScreen}>
+        {phase === "loading" && <div className="page-state">Loading your portfolio…</div>}
+        {phase === "error" && (
+          <div className="page-state" role="alert">
+            <strong>Couldn’t reach the server.</strong>
+            <span>{error}</span>
+            <Button onClick={() => void load()}>Try again</Button>
+          </div>
         )}
-        {screen === "results" && (
-          <Results
-            profile={profile}
-            stocks={stocks}
-            loading={loading}
-            error={error}
-            onStart={() => setScreen("performance")}
-            onEdit={() => setScreen("onboarding")}
-          />
+        {phase === "onboarding" && <Onboarding initial={profile} onComplete={build} busy={busy} error={error} />}
+        {phase === "ready" && portfolio && (
+          <>
+            {error && (
+              <div className="page" role="alert" style={{ paddingBottom: 0 }}>
+                <p className="form-error">Couldn’t refresh: {error}. Showing the last data received.</p>
+              </div>
+            )}
+            {screen === "performance" ? (
+              <Performance portfolio={portfolio} />
+            ) : (
+              <Results portfolio={portfolio} onStart={() => setScreen("performance")} onNew={startOver} />
+            )}
+          </>
         )}
-        {screen === "performance" && <Performance profile={profile} stocks={stocks} />}
       </Shell>
     </div>
   )

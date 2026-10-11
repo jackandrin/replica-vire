@@ -5,7 +5,8 @@ import argparse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from . import autotrade, ingest_docs, ingest_events, ingest_intraday, predict, sentiment_agent, sync_snowflake
+from . import (autotrade, ingest_docs, ingest_events, ingest_intraday, portfolio, predict, sentiment_agent,
+               sync_snowflake)
 from .common import get_logger, log_step
 
 log = get_logger("run_cycle")
@@ -27,7 +28,8 @@ def main(argv=None):
     if not a.skip_sentiment:
         steps.append(("sentiment_agent", lambda: sentiment_agent.main(["--backend", "cortex"])))
     steps += [("predict", lambda: predict.main([])),
-              ("autotrade", lambda: autotrade.main(["--no-orders"] if a.dry_run else []))]
+              ("autotrade", lambda: autotrade.main(["--no-orders"] if a.dry_run else [])),
+              ("portfolios", lambda: portfolio.main(["--dry-run"] if a.dry_run else []))]  # fills, rebalance, snapshots
     if not a.skip_snowflake:
         steps.append(("sync_snowflake", lambda: sync_snowflake.main([])))
 

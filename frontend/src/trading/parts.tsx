@@ -94,18 +94,21 @@ export function Button({
   className = "",
   onClick,
   type = "button",
+  disabled = false,
 }: {
   children: ReactNode
   kind?: "primary" | "secondary" | "ghost"
   className?: string
   onClick?: () => void
   type?: "button" | "submit"
+  disabled?: boolean
 }) {
   return (
     <button
       type={type}
       className={`button button-${kind} ${className}`}
       onClick={onClick}
+      disabled={disabled}
     >
       {children}
     </button>
@@ -139,12 +142,10 @@ function Logo() {
 export function Shell({
   screen,
   setScreen,
-  onExit,
   children,
 }: {
   screen: Screen
   setScreen: (screen: Screen) => void
-  onExit: () => void
   children: ReactNode
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -176,14 +177,9 @@ export function Shell({
           >
             Performance
           </button>
-          <button
-            onClick={() => {
-              setMenuOpen(false)
-              onExit()
-            }}
-          >
+          <a href="/" onClick={() => setMenuOpen(false)}>
             Research
-          </button>
+          </a>
         </nav>
         <div className="nav-actions">
           <button
@@ -208,13 +204,19 @@ export function Shell({
 }
 
 const budgets = [50, 100, 250, 500]
+// Must match the server's GICS sector names (hackathon-trader/src/sectors.py).
 export const sectors = [
-  "Technology",
-  "Communication",
-  "Consumer",
-  "Financial",
-  "Healthcare",
+  "Information Technology",
+  "Communication Services",
+  "Consumer Discretionary",
+  "Consumer Staples",
+  "Health Care",
+  "Financials",
   "Energy",
+  "Industrials",
+  "Materials",
+  "Utilities",
+  "Real Estate",
   "No preference",
 ]
 const risks = [
@@ -258,9 +260,13 @@ function Progress({ step }: { step: number }) {
 export function Onboarding({
   initial,
   onComplete,
+  busy = false,
+  error = "",
 }: {
   initial: Profile
   onComplete: (profile: Profile) => void
+  busy?: boolean
+  error?: string
 }) {
   const [step, setStep] = useState(1)
   const [budgetText, setBudgetText] = useState(String(initial.budget))
@@ -462,6 +468,11 @@ export function Onboarding({
               </>
             )}
           </div>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
           <div className="step-actions">
             {step > 1 && (
               <Button kind="ghost" onClick={() => setStep(step - 1)}>
@@ -470,6 +481,7 @@ export function Onboarding({
             )}
             <Button
               className="next-button"
+              disabled={busy}
               onClick={() => {
                 if (!budgetValid) return setStep(1)
                 if (step < 4) return setStep(step + 1)
@@ -481,12 +493,12 @@ export function Onboarding({
                 })
               }}
             >
-              {step === 4 ? "Build my portfolio" : "Continue"}{" "}
+              {step === 4 ? (busy ? "Placing paper trades…" : "Build my portfolio") : "Continue"}{" "}
               <Icon name="arrow" />
             </Button>
           </div>
           <p className="paper-note">
-            <Icon name="shield" size={14} /> Paper trading only. Not financial
+            <Icon name="shield" size={14} /> Live paper trading on Alpaca. No real money. Not financial
             advice.
           </p>
         </div>

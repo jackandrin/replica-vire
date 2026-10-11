@@ -134,6 +134,40 @@ export type Alert = {
   status: 'new' | 'executed' | 'dismissed' | 'requested';
 };
 
+export type PortfolioProfile = { budget: number; risk: string; horizon: string; sectors: string[] };
+export type PortfolioTarget = {
+  symbol: string; company: string; sector: string; price: number | null;
+  weight: number;       // percent of portfolio value
+  target_usd: number; score: number; reason: string;
+};
+export type PortfolioPosition = {
+  symbol: string; company: string; sector: string; qty: number; avg_cost: number | null; price: number | null;
+  market_value: number | null; pnl: number | null; pnl_pct: number | null; weight: number | null;
+};
+export type PortfolioOrder = {
+  symbol: string; side: 'buy' | 'sell'; notional: number | null; filled_qty: number | null;
+  filled_avg_price: number | null; status: string; reason: string | null; created_at: string;
+};
+export type PortfolioPoint = { date: string; value: number; return_pct: number; spy_return_pct: number | null };
+// A live paper-trading portfolio, generated and managed server-side (Alpaca paper account + virtual ledger).
+export type LivePortfolio = {
+  id: string;
+  status: 'active' | 'closed';
+  created_at: string;
+  last_rebalance: string | null;
+  profile: PortfolioProfile;
+  summary: {
+    value: number; cash: number; invested: number; pnl: number; pnl_pct: number;
+    spy_return_pct: number | null; pending_orders: number;
+  };
+  targets: PortfolioTarget[];
+  positions: PortfolioPosition[];
+  history: PortfolioPoint[];
+  notes: string[];
+  orders: PortfolioOrder[];
+};
+export type CreatedPortfolio = LivePortfolio & { token: string };
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) { super(message); this.status = status; }
@@ -150,6 +184,36 @@ export async function apiGet<T>(route: string, signal?: AbortSignal): Promise<T>
   if (!response.ok) return failure(response);
   return response.json() as Promise<T>;
 }
+
+const STORE_KEY = 'rv.portfolio';
+export type StoredPortfolio = { id: string; token: string };
+export function storedPortfolio(): StoredPortfolio | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORE_KEY) ?? 'null');
+    return v && typeof v.id === 'string' && typeof v.token === 'string' ? v : null;
+  } catch { return null; }
+}
+export function rememberPortfolio(p: StoredPortfolio | null): void {
+  try { p ? localStorage.setItem(STORE_KEY, JSON.stringify(p)) : localStorage.removeItem(STORE_KEY); } catch { /* storage blocked */ }
+}
+
+async function portfolioRequest<T>(route: string, method: 'GET' | 'POST', token?: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  if (!route.startsWith('/api/portfolios')) throw new Error('Invalid API path');
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(route, { method, headers, signal, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!response.ok) return failure(response);
+  return response.json() as Promise<T>;
+}
+
+/** Submit the setup profile; the server builds the portfolio and places the paper orders. */
+export const createPortfolio = (profile: PortfolioProfile) =>
+  portfolioRequest<CreatedPortfolio>('/api/portfolios', 'POST', undefined, profile);
+export const fetchPortfolio = (id: string, token: string, signal?: AbortSignal) =>
+  portfolioRequest<LivePortfolio>(`/api/portfolios/${encodeURIComponent(id)}`, 'GET', token, undefined, signal);
+export const closePortfolio = (id: string, token: string) =>
+  portfolioRequest<LivePortfolio>(`/api/portfolios/${encodeURIComponent(id)}/close`, 'POST', token);
 
 export async function apiSend<T>(route: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
   if (!route.startsWith('/api/')) throw new Error('Invalid API path');
