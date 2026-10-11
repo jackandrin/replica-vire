@@ -273,3 +273,29 @@ footer p { color: #b7c8bd; font-size: 10px; }
   .chart { animation: chartPulse 2s ease-out infinite; }
   @keyframes chartPulse { 0% { opacity: .88; } 37.5%, 100% { opacity: 1; } }
 }
+
+/* Real-data integration additions. Keeps the original ReplicaVire theme. */
+.connection-error { margin: 16px 4.45vw; padding: 16px; border: 1px solid #e6b5af; background: var(--blush); border-radius: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.connection-error .button { margin-left: auto; }
+.live-chart { width: 100%; min-width: 0; overflow: hidden; background: var(--cream); border: 1px solid var(--line); border-radius: 5px; padding: 8px; }
+.live-chart svg { width: 100%; display: block; }
+.chart-labels { display: flex; justify-content: space-between; padding: 0 12px 4px; color: var(--muted); font-size: 10px; }
+.mini-trend { width: 96px; }
+.mini-trend .live-chart { border: 0; padding: 0; }
+.mini-trend .live-chart svg { height: 44px; }
+.mini-trend .live-chart text { display: none; }
+.no-chart { padding: 36px 10px; background: var(--cream); color: var(--muted); text-align: center; border: 1px solid var(--line); border-radius: 6px; }
+.placeholder-page { margin: 32px 4.45vw; padding: 42px; }
+.replay input[type=date] { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 4px; background: white; color: var(--ink); }
+.review a { color: var(--forest); text-decoration: underline; }
+.review small { max-width: 100%; }
+.analysis-main .live-chart { margin-top: 14px; }
+.prediction-cards .metric { width: 100%; }
+@media (max-width: 640px) {
+  .connection-error { margin: 12px 20px; }
+  .mini-trend { width: 75px; }
+  .metric strong { font-size: 20px; }
+  .replay-result .three-grid { grid-template-columns: 1fr; }
+}
+
+@media (min-width: 1041px) { .filters { grid-template-columns: minmax(220px,1fr) repeat(3,minmax(140px,180px)) 82px; } }

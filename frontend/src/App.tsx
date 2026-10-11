@@ -1,402 +1,239 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
+import { apiGet, type Overview, type Stock, type StockDetail, type Performance, type Replay } from './api';
 
-type Stock = {
-  ticker: string;
-  company: string;
-  sector: string;
-  price: number;
-  day: number;
-  sentiment: number;
-  momentum: number;
-  nn: number;
-  regression: number;
-  combined: number;
-  spread: number;
-};
-
-const stocks: Stock[] = [
-  { ticker: "DUOL", company: "Duolingo Inc.", sector: "Consumer", price: 142.5, day: 2.4, sentiment: 0.82, momentum: 0.12, nn: 6.8, regression: 6.2, combined: 6.5, spread: 0.6 },
-  { ticker: "UBER", company: "Uber Technologies Inc.", sector: "Technology", price: 48.2, day: 1.8, sentiment: 0.74, momentum: 0.08, nn: 5.4, regression: 5.1, combined: 5.3, spread: 0.3 },
-  { ticker: "SPOT", company: "Spotify Technology SA", sector: "Communication", price: 184.1, day: -0.9, sentiment: -0.31, momentum: -0.06, nn: 4.1, regression: 3.8, combined: 4.0, spread: 0.3 },
-  { ticker: "NFLX", company: "Netflix Inc.", sector: "Communication", price: 612.4, day: 0.6, sentiment: 0.58, momentum: 0.04, nn: 3.7, regression: 3.4, combined: 3.6, spread: 0.3 },
-  { ticker: "RBLX", company: "Roblox Corp.", sector: "Technology", price: 56.8, day: -1.2, sentiment: -0.42, momentum: -0.09, nn: 2.9, regression: 2.6, combined: 2.8, spread: 0.3 },
-];
-
-const smoothScroll = (id: string) => {
-  window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 0);
-};
-
-function Logo({ onClick }: { onClick?: () => void }) {
-  return (
-    <button className="logo" onClick={onClick} aria-label="ReplicaVire home">
-      <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-      <span className="wordmark">ReplicaVire</span>
-      <span className="descriptor">EQUITY RESEARCH</span>
-    </button>
-  );
-}
-
-function Header({ onHome }: { onHome: () => void }) {
-  const go = (id: string) => { onHome(); smoothScroll(id); };
-  return (
-    <header className="site-header">
-      <Logo onClick={onHome} />
-      <nav className="desktop-nav" aria-label="Primary navigation">
-        <button className="active" onClick={onHome}>Dashboard</button>
-        <button onClick={() => go("screener")}>Stock Screener</button>
-        <button onClick={() => go("performance")}>Model Performance</button>
-        <button onClick={() => go("methodology")}>Methodology</button>
-        <button onClick={() => go("about")}>About</button>
-      </nav>
-      <div className="header-actions">
-        <button className="watchlist" aria-label="Illustrative watchlist"><img src="/assets/8df8b.svg" alt="" width="15" height="15" /> Watchlist <span className="mono">03</span></button>
-        <button className="button dark launch" onClick={() => go("screener")}>Launch Dashboard</button>
-      </div>
-    </header>
-  );
-}
+const number = (v: number | null | undefined, digits = 2) => v == null || !Number.isFinite(v) ? '—' : v.toFixed(digits);
+const percent = (v: number | null | undefined, digits = 2) => v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(digits)}%`;
+const signed = (v: number | null | undefined, digits = 2) => v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(digits)}`;
+const tone = (v: number | null | undefined) => v == null ? 'dark' : v < 0 ? 'negative' : 'positive';
+const dateLabel = (value: string | null | undefined) => value ? value.slice(0, 10) : 'Unavailable';
+const scrollToId = (id: string) => window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 0);
 
 function Badge({ children, blush = false }: { children: React.ReactNode; blush?: boolean }) {
-  return <span className={blush ? "badge blush" : "badge"}>{children}</span>;
+  return <span className={blush ? 'badge blush' : 'badge'}>{children}</span>;
 }
-
-function Metric({ label, value, note, tone = "green" }: { label: string; value: string; note: string; tone?: "green" | "dark" | "red" }) {
-  return (
-    <div className="metric">
-      <span className="eyebrow">{label}</span>
-      <strong className={`mono ${tone}`}>{value}</strong>
-      <small>{note}</small>
-    </div>
-  );
+function Metric({ label, value, note, toneClass = 'dark' }: { label: string; value: string; note: string; toneClass?: string }) {
+  return <div className="metric"><span className="eyebrow">{label}</span><strong className={`mono ${toneClass}`}>{value}</strong><small>{note}</small></div>;
 }
-
-function Chart({ kind = "price" }: { kind?: "price" | "compare" | "model" | "spark" }) {
-  const sources = kind === "price"
-    ? ["/assets/8993c.svg"]
-    : kind === "compare"
-      ? ["/assets/a6c3f.svg", "/assets/64a19.svg"]
-      : kind === "model"
-        ? ["/assets/478d5.svg", "/assets/5e914.png"]
-        : ["/assets/61974.svg"];
-  return (
-    <div className={`chart ${kind}`} aria-label={`${kind} illustrative chart`}>
-      <span className="grid-lines" />
-      {sources.map((source) => <img key={source} src={source} alt="" />)}
-    </div>
-  );
+function Header({ onHome }: { onHome: () => void }) {
+  const go = (id: string) => { onHome(); scrollToId(id); };
+  return <header className="site-header">
+    <button className="logo" onClick={onHome} aria-label="ReplicaVire home"><span className="brand-mark" aria-hidden="true"><i /><i /><i /></span><span className="wordmark">ReplicaVire</span><span className="descriptor">EQUITY RESEARCH</span></button>
+    <nav className="desktop-nav" aria-label="Main navigation">
+      <button onClick={onHome}>Dashboard</button><button onClick={() => go('screener')}>Stock Screener</button>
+      <button onClick={() => go('performance')}>Model Performance</button><button onClick={() => go('methodology')}>Methodology</button>
+      <button onClick={() => go('about')}>About</button>
+    </nav>
+    <div className="header-actions"><button className="button dark launch" onClick={() => go('screener')}>Launch Dashboard</button></div>
+  </header>;
 }
-
-function Hero() {
-  return (
-    <section className="hero">
-      <div className="hero-copy">
-        <Badge>AI-POWERED SENTIMENT RESEARCH</Badge>
-        <h1>Understand the sentiment. Predict the movement.</h1>
-        <p>Discover investment opportunities through AI-powered customer sentiment analysis, neural network predictions, and historical market data.</p>
-        <div className="actions">
-          <button className="button primary" onClick={() => smoothScroll("screener")}>Explore Stocks</button>
-          <button className="button secondary" onClick={() => smoothScroll("methodology")}>How It Works</button>
-        </div>
-        <div className="hero-stats">
-          <Metric label="SOURCES" value="12k+" note="Illustrative reviews processed daily" tone="dark" />
-          <Metric label="MODELS" value="2" note="Neural network + regression" tone="dark" />
-          <Metric label="COVERAGE" value="150+" note="Illustrative US-listed coverage" tone="dark" />
-        </div>
+function TrendChart({ values, labels, title, height = 180 }: { values: (number | null)[]; labels?: string[]; title: string; height?: number }) {
+  const valid = values.map((v, i) => v === null || !Number.isFinite(v) ? null : { i, v }).filter((p): p is { i: number; v: number } => p !== null);
+  if (valid.length < 2) return <div className="no-chart">No time-series data available</div>;
+  const min = Math.min(...valid.map(p => p.v));
+  const max = Math.max(...valid.map(p => p.v));
+  const scale = max - min || 1;
+  const denom = Math.max(1, values.length - 1);
+  const points = valid.map(p => `${20 + 560 * p.i / denom},${135 - 108 * (p.v - min) / scale}`).join(' ');
+  return <div className="live-chart" role="img" aria-label={`${title}, ${valid.length} values`}>
+    <svg viewBox="0 0 600 170" preserveAspectRatio="none" style={{ height }}>
+      {[35, 75, 115, 145].map(y => <line key={y} x1="20" x2="580" y1={y} y2={y} stroke="#d9ddd5" strokeWidth="1" />)}
+      <polyline points={points} fill="none" stroke="#23684f" strokeWidth="2.8" strokeLinejoin="round" strokeLinecap="round" />
+      <text x="20" y="18" fontSize="11" fill="#69716c">{max.toFixed(2)}</text>
+      <text x="20" y="158" fontSize="11" fill="#69716c">{min.toFixed(2)}</text>
+    </svg>
+    {labels && labels.length > 1 && <div className="chart-labels"><span>{labels[0]?.slice(0, 10)}</span><span>{labels[labels.length - 1]?.slice(0, 10)}</span></div>}
+  </div>;
+}
+function MiniTrend({ stock }: { stock: Stock }) {
+  const values = stock.price_history.map(p => p.close);
+  return <div className="mini-trend"><TrendChart values={values} title={`${stock.ticker} last ${values.length} trading closes`} height={44} /></div>;
+}
+function Hero({ overview, connected }: { overview: Overview | null; connected: boolean }) {
+  const available = overview?.stocks.filter(s => s.prediction_date).length ?? 0;
+  const withNews = overview?.stocks.filter(s => s.news_count_5d !== null).length ?? 0;
+  return <section className="hero">
+    <div className="hero-copy"><Badge>AI-POWERED FINANCIAL NEWS RESEARCH</Badge><h1>Understand the sentiment. Predict the movement.</h1>
+      <p>Explore real market-price history, financial news sentiment, and Ridge versus neural-network estimates of five-day returns relative to SPY.</p>
+      <div className="actions"><button className="button primary" onClick={() => scrollToId('screener')}>Explore Stocks</button><button className="button secondary" onClick={() => scrollToId('methodology')}>How It Works</button></div>
+      <div className="hero-stats">
+        <Metric label="WATCHED STOCKS" value={overview ? String(overview.stocks.length) : '—'} note="From backend config.yaml" />
+        <Metric label="MODEL PAIRS" value={String(available)} note="Latest date-matched predictions" />
+        <Metric label="NEWS FEATURES" value={String(withNews)} note="Tracked stocks with sentiment features" />
       </div>
-      <div className="panel preview">
-        <div className="section-row">
-          <div><span className="eyebrow">DASHBOARD PREVIEW</span><h3>Today’s sentiment-led opportunities</h3></div>
-          <Badge>ILLUSTRATIVE</Badge>
-        </div>
-        <div className="three-grid">
-          <Metric label="NEURAL NETWORK" value="+4.8%" note="Median five-day predicted return" />
-          <Metric label="SENTIMENT MOMENTUM" value="+0.18" note="Seven-day score change" />
-          <Metric label="FORECAST SPREAD" value="0.6pp" note="Difference between estimates" />
-        </div>
-        <div className="preview-chart">
-          <div className="section-row"><span className="eyebrow">SENTIMENT VS. PRICE</span><small>30-day trend</small></div>
-          <Chart kind="compare" />
-          <div className="legend"><span className="green-line">Sentiment</span><span>Price</span></div>
-        </div>
+    </div>
+    <div className="panel preview">
+      <div className="section-row"><div><span className="eyebrow">RESEARCH CONNECTION</span><h3>Backend data status</h3></div><Badge blush={!connected}>{connected ? 'TIGERDATA FEED' : 'NOT CONNECTED'}</Badge></div>
+      <div className="preview-chart"><span className="eyebrow">CURRENT DATA PIPELINE</span>
+        <p>Alpaca prices + Finnhub/Alpaca financial news → TigerData → Ridge + MLP → ReplicaVire</p>
+        <p className="fine-print">The backend currently predicts five-day <strong>excess return versus SPY</strong>, not a stock's absolute price return. The original Google Play review snapshots aren't integrated here yet.</p>
       </div>
-    </section>
-  );
+      <div className="three-grid"><Metric label="PRICE SOURCE" value="Alpaca" note="Stored daily bars" /><Metric label="SENTIMENT" value="News" note="VADER / optional Cortex" /><Metric label="BENCHMARK" value="SPY" note="Excess-return target" /></div>
+    </div>
+  </section>;
 }
 
-function InfoTip({ text }: { text: string }) {
-  return <span className="info-tip" tabIndex={0} data-tip={text} aria-label={text}>i</span>;
-}
-
-function Screener({ onSelect }: { onSelect: (stock: Stock) => void }) {
-  const [query, setQuery] = useState("");
-  const [sector, setSector] = useState("All");
-  const [sentiment, setSentiment] = useState("All");
-  const [returns, setReturns] = useState("All");
-  const [sort, setSort] = useState<keyof Stock>("combined");
-  const [direction, setDirection] = useState<"asc" | "desc">("desc");
-  const [loading, setLoading] = useState(false);
-
-  const update = (fn: () => void) => {
-    setLoading(true);
-    fn();
-    window.setTimeout(() => setLoading(false), 240);
-  };
-
-  const filtered = useMemo(() => stocks
-    .filter((stock) => `${stock.ticker} ${stock.company}`.toLowerCase().includes(query.toLowerCase()))
-    .filter((stock) => sector === "All" || stock.sector === sector)
-    .filter((stock) => sentiment === "All" || (sentiment === "Positive" ? stock.sentiment > 0 : stock.sentiment < 0))
-    .filter((stock) => returns === "All" || (returns === "4+" ? stock.combined >= 4 : stock.combined < 4))
+type SortField = 'ticker' | 'price' | 'sentiment' | 'mean_excess_pct' | 'spread_pp';
+function Screener({ stocks, onSelect, loading }: { stocks: Stock[]; onSelect: (s: Stock) => void; loading: boolean }) {
+  const [query, setQuery] = useState('');
+  const [sector, setSector] = useState('All');
+  const [sentiment, setSentiment] = useState('All');
+  const [order, setOrder] = useState<SortField>('mean_excess_pct');
+  const [descending, setDescending] = useState(true);
+  const sectors = ['All', ...new Set(stocks.map(s => s.sector))];
+  const visible = useMemo(() => stocks.filter(s => `${s.ticker} ${s.company}`.toLowerCase().includes(query.toLowerCase()))
+    .filter(s => sector === 'All' || s.sector === sector)
+    .filter(s => sentiment === 'All' || (s.sentiment !== null && (sentiment === 'Positive' ? s.sentiment > 0 : s.sentiment < 0)))
     .sort((a, b) => {
-      const av = a[sort], bv = b[sort];
-      const comparison = typeof av === "string" ? av.localeCompare(String(bv)) : Number(av) - Number(bv);
-      return direction === "asc" ? comparison : -comparison;
-    }), [query, sector, sentiment, returns, sort, direction]);
-
-  const clear = () => { setQuery(""); setSector("All"); setSentiment("All"); setReturns("All"); };
-  return (
-    <section className="page-section" id="screener">
-      <div className="section-heading">
-        <div><span className="eyebrow">01 / STOCK SCREENER</span><h2>Stock Screener</h2></div>
-        <small>{filtered.length} stocks · Illustrative sentiment and prediction data</small>
-      </div>
-      <div className="filters">
-        <label className="search"><img src="/assets/c647e.svg" alt="" width="16" height="16" /><input value={query} onChange={(e) => update(() => setQuery(e.target.value))} placeholder="Search ticker or company" /></label>
-        <select aria-label="Sector filter" value={sector} onChange={(e) => update(() => setSector(e.target.value))}>
-          <option>All</option><option>Consumer</option><option>Technology</option><option>Communication</option>
-        </select>
-        <select aria-label="Sentiment filter" value={sentiment} onChange={(e) => update(() => setSentiment(e.target.value))}>
-          <option>All</option><option>Positive</option><option>Negative</option>
-        </select>
-        <select aria-label="Predicted return filter" value={returns} onChange={(e) => update(() => setReturns(e.target.value))}>
-          <option value="All">Return: All</option><option value="4+">Return: 4%+</option><option value="<4">Return: Under 4%</option>
-        </select>
-        <select aria-label="Sort column" value={sort} onChange={(e) => setSort(e.target.value as keyof Stock)}>
-          <option value="combined">Sort: Predicted return</option><option value="sentiment">Sort: Sentiment</option><option value="spread">Sort: Spread</option><option value="price">Sort: Price</option><option value="ticker">Sort: Ticker</option>
-        </select>
-        <button className="sort-button" onClick={() => setDirection(direction === "asc" ? "desc" : "asc")} aria-label={`Sort ${direction === "asc" ? "descending" : "ascending"}`}>{direction === "asc" ? "↑ ASC" : "↓ DESC"}</button>
-      </div>
-      <div className="table-wrap">
-        {loading ? (
-          <div className="loading-state"><i /><i /><i /><span>Filtering illustrative signals…</span></div>
-        ) : filtered.length === 0 ? (
-          <div className="empty-state">
-            <span className="empty-icon">⌕</span><h3>No results found</h3>
-            <p>Try adjusting your filters or search for a different ticker or company.</p>
-            <button className="button secondary" onClick={clear}>Clear filters</button>
-          </div>
-        ) : (
-          <table>
-            <thead><tr>
-              <th>TICKER / COMPANY</th><th>PRICE</th><th>1D</th>
-              <th>SENTIMENT <InfoTip text="Average illustrative sentiment score from −1 to +1." /></th>
-              <th>7D MOMENTUM <InfoTip text="Change in average sentiment over seven days; score units, not stock return." /></th>
-              <th>NN 5D</th><th>REG 5D</th>
-              <th>COMBINED <InfoTip text="Illustrative weighted average predicted five-day return." /></th>
-              <th>SPREAD <InfoTip text="Absolute difference between model estimates in percentage points; not confidence." /></th><th>SPARKLINE</th>
-            </tr></thead>
-            <tbody>{filtered.map((stock, index) => (
-              <tr key={stock.ticker} onClick={() => onSelect(stock)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelect(stock)} className={index === 0 ? "selected-row" : ""}>
-                <td><b>{stock.ticker}</b><small>{stock.company}</small></td>
-                <td className="mono">{stock.price.toFixed(2)}<small>Sample close</small></td>
-                <td className={`mono ${stock.day >= 0 ? "positive" : "negative"}`}>{stock.day > 0 ? "+" : ""}{stock.day}%</td>
-                <td className={`mono ${stock.sentiment >= 0 ? "positive" : "negative"}`}>{stock.sentiment > 0 ? "+" : ""}{stock.sentiment}</td>
-                <td className={`mono ${stock.momentum >= 0 ? "positive" : "negative"}`}>{stock.momentum > 0 ? "+" : ""}{stock.momentum}</td>
-                <td className="mono positive">+{stock.nn}%</td><td className="mono positive">+{stock.regression}%</td>
-                <td className="mono positive strong">+{stock.combined}%</td><td className="mono positive">{stock.spread}pp</td>
-                <td><Chart kind="spark" /></td>
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
-      </div>
-      <p className="fine-print">Local mock data only. Search, filters, sorting and row links are interactive; there is no live market-data, payment, or trading integration.</p>
-    </section>
-  );
-}
-
-const modelCards = [
-  { name: "Neural Network", accuracy: "78%", mae: "3.4 pp", rmse: "4.6 pp" },
-  { name: "Regression Model", accuracy: "72%", mae: "4.1 pp", rmse: "5.2 pp" },
-  { name: "Combined Forecast", accuracy: "76%", mae: "3.2 pp", rmse: "4.3 pp" },
-];
-
-function ModelPerformance() {
-  const [period, setPeriod] = useState("1Y");
-  return (
-    <section className="page-section" id="performance">
-      <div className="section-heading">
-        <div><span className="eyebrow">02 / MODEL PERFORMANCE ANALYTICS</span><h2>Model Performance</h2></div>
-        <span><Badge blush>DEMO DATA</Badge> <small>Illustrative metrics · no verified backtest results</small></span>
-      </div>
-      <div className="tabs">{["1Y", "2Y", "3Y", "5Y"].map((value) => <button key={value} className={period === value ? "selected" : ""} onClick={() => setPeriod(value)}>{value}</button>)}</div>
-      <div className="model-grid">{modelCards.map((model) => (
-        <article className="panel model-card" key={model.name}>
-          <div className="section-row"><div><span className="eyebrow">ILLUSTRATIVE MODEL</span><h3>{model.name}</h3></div><Badge>DEMO DATA</Badge></div>
-          <div className="metric-grid">
-            <Metric label="DIRECTIONAL ACCURACY" value={model.accuracy} note="Illustrative up/down direction" />
-            <Metric label="MAE" value={model.mae} note="Sample absolute error" tone="dark" />
-            <Metric label="RMSE" value={model.rmse} note="Sample weighted error" />
-            <Metric label="EVALUATED PREDICTIONS" value="240" note="Illustrative count" />
-          </div>
-          <span className="eyebrow">PREDICTED / REALIZED · SAMPLE 5D %</span>
-          <Chart kind="model" />
-          <div className="legend"><span className="green-line">Predicted</span><span>Sample return</span><span className="red-line">Benchmark</span></div>
-          <p className="warning">ILLUSTRATIVE ONLY · VERIFIED RESULTS UNAVAILABLE</p>
-        </article>
-      ))}</div>
-      <HistoricalReplay />
-      <div className="state-reference">
-        <div className="section-row"><span className="eyebrow">COMPONENT STATES · INTERACTIVE REFERENCE</span><small>Local mock interface only</small></div>
-        <div className="state-grid">
-          <article><span className="eyebrow">LOADING STATE</span><div className="skeleton"><i /><i /><i /></div><b>Filtering signals…</b></article>
-          <article className="error-card"><span className="eyebrow">ERROR STATE</span><Badge blush>DATA UNAVAILABLE</Badge><b>Unable to load local model data</b><p>This demonstration state does not represent a failed live integration.</p><button className="button dark">Retry</button></article>
-          <article><span className="eyebrow">EMPTY STATE</span><b>No results found</b><p>Adjust the screener filters or search for another ticker.</p><button className="button secondary" onClick={() => smoothScroll("screener")}>Open screener</button></article>
-          <article className="selected-card"><span className="eyebrow">SELECTED + HOVER</span><b>Active controls are outlined</b><p>Buttons, rows, tabs, dates, and filter fields include visible hover, selected, and keyboard-focus states.</p></article>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function HistoricalReplay() {
-  const [date, setDate] = useState(22);
-  const [windowDays, setWindowDays] = useState(30);
-  const status = date < 20 ? "Insufficient historical data" : "Retrospective analysis only";
-  const blanks = [null, null, ...Array.from({ length: 31 }, (_, i) => i + 1), null, null];
-  return (
-    <div className="panel replay">
-      <span className="eyebrow">HISTORICAL REPLAY</span>
-      <div className="replay-grid">
-        <div className="calendar-card">
-          <p>January 2025 · calendar preview</p>
-          <div className="calendar weekdays">{["M", "T", "W", "T", "F", "S", "S"].map((day, i) => <span key={`${day}-${i}`}>{day}</span>)}</div>
-          <div className="calendar">{blanks.map((day, i) => <button key={i} disabled={!day} className={date === day ? "selected" : ""} onClick={() => day && setDate(day)}>{day}</button>)}</div>
-          <div className="window-tabs">{[7, 14, 30].map((days) => <button key={days} className={windowDays === days ? "selected" : ""} onClick={() => setWindowDays(days)}>{days} days</button>)}</div>
-          <small>Mock controls · no live historical integration</small>
-        </div>
-        <div className="replay-result">
-          <div className="section-row"><b>Selected state</b><Badge blush>{status}</Badge></div>
-          <div className="replay-values">
-            <Metric label="DATE SELECTOR" value={`Jan ${date}, 2025`} note="Illustrative date" tone="dark" />
-            <Metric label="SENTIMENT WINDOW" value={`${windowDays} days`} note="Selected window" tone="dark" />
-            <Metric label="ELIGIBLE REVIEWS" value="—" note="Withheld" tone="dark" />
-            <Metric label="HISTORICAL FORECASTS" value="—" note="Withheld" tone="dark" />
-            <Metric label="REALIZED RETURN" value="—" note="Withheld" tone="red" />
-          </div>
-          <p>{status === "Retrospective analysis only" ? "Data was collected or analyzed after the selected cutoff. Historical outputs are withheld; retrospective research is not a verified backtest." : "The selected range lacks enough verified reviews, sentiment history, or forecast evidence. No historical result can be shown."}</p>
-        </div>
-      </div>
-      <div className="integrity-states">
-        <article><b>Verified historical data</b><Badge>Example appearance only</Badge><p>Shown only when point-in-time evidence exists. No supplied dates meet this standard.</p></article>
-        <article className="current"><b>Retrospective analysis only</b><Badge blush>Current default</Badge><p>Historical outputs stay withheld when evidence came after the cutoff.</p></article>
-        <article><b>Insufficient historical data</b><Badge blush>Empty state</Badge><p>Used when verified reviews, sentiment history, or forecast evidence are incomplete.</p></article>
-      </div>
+      const av = a[order], bv = b[order];
+      if (av == null && bv == null) return a.ticker.localeCompare(b.ticker);
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const comparison = typeof av === 'string' ? av.localeCompare(String(bv)) : Number(av) - Number(bv);
+      return descending ? -comparison : comparison;
+    }), [stocks, query, sector, sentiment, order, descending]);
+  return <section className="page-section" id="screener">
+    <div className="section-heading"><div><span className="eyebrow">01 / LIVE RESEARCH SCREENER</span><h2>Stock Screener</h2></div><small>{visible.length} stocks · News sentiment · Five-day excess-return predictions</small></div>
+    <div className="filters">
+      <label className="search"><img src="/assets/c647e.svg" alt="" width="16" height="16" /><input value={query} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)} placeholder="Search ticker or company" /></label>
+      <select aria-label="Sector filter" value={sector} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSector(e.target.value)}>{sectors.map(s => <option key={s}>{s}</option>)}</select>
+      <select aria-label="Sentiment filter" value={sentiment} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSentiment(e.target.value)}><option>All</option><option>Positive</option><option>Negative</option></select>
+      <select aria-label="Sort by" value={order} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setOrder(e.target.value as SortField)}><option value="mean_excess_pct">Model mean</option><option value="sentiment">News sentiment</option><option value="price">Price</option><option value="spread_pp">Model spread</option><option value="ticker">Ticker</option></select>
+      <button className="sort-button" onClick={() => setDescending(!descending)}>{descending ? '↓ DESC' : '↑ ASC'}</button>
     </div>
-  );
+    <div className="table-wrap">{loading ? <div className="empty-state">Loading real data…</div> : visible.length === 0 ? <div className="empty-state"><h3>No stocks available</h3><p>Check the API connection or adjust your search and filters. No demo prices or predictions are substituted.</p></div> : <table>
+      <thead><tr><th>TICKER / COMPANY</th><th>LAST CLOSE</th><th>1D</th><th>NEWS SENTIMENT (5D)</th><th>NEWS COUNT (5D)</th><th>MLP EXCESS 5D</th><th>RIDGE EXCESS 5D</th><th>MEAN EXCESS 5D</th><th>SPREAD</th><th>PRICE TREND</th></tr></thead>
+      <tbody>{visible.map(s => <tr key={s.ticker} tabIndex={0} role="button" onKeyDown={(e: React.KeyboardEvent<HTMLTableRowElement>) => (e.key === 'Enter' || e.key === ' ') && onSelect(s)} onClick={() => onSelect(s)}>
+        <td><b>{s.ticker}</b><small>{s.company}</small></td><td className="mono">{s.price == null ? '—' : `$${number(s.price)}`}<small>{dateLabel(s.price_date)}</small></td>
+        <td className={`mono ${tone(s.day_change_pct)}`}>{percent(s.day_change_pct)}</td>
+        <td className={`mono ${tone(s.sentiment)}`}>{signed(s.sentiment, 3)}</td><td className="mono">{s.news_count_5d ?? '—'}</td>
+        <td className={`mono ${tone(s.mlp_excess_pct)}`}>{percent(s.mlp_excess_pct)}</td>
+        <td className={`mono ${tone(s.ridge_excess_pct)}`}>{percent(s.ridge_excess_pct)}</td>
+        <td className={`mono strong ${tone(s.mean_excess_pct)}`}>{percent(s.mean_excess_pct)}</td><td className="mono">{s.spread_pp == null ? '—' : `${number(s.spread_pp)}pp`}</td><td><MiniTrend stock={s} /></td>
+      </tr>)}</tbody>
+    </table>}</div>
+    <p className="fine-print">Values come from TigerData when connected. Missing values remain unavailable. Model numbers are excess-return estimates relative to SPY, not expected stock returns. The mean is an unweighted average of the two estimates, not a calibrated ensemble.</p>
+  </section>;
 }
-
+function ModelPerformance() {
+  const [data, setData] = useState<Performance | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => { const ctrl = new AbortController(); apiGet<Performance>('/api/performance', ctrl.signal).then(setData).catch(e => { if (!ctrl.signal.aborted) setError(e.message); }); return () => ctrl.abort(); }, []);
+  return <section className="page-section" id="performance"><div className="section-heading"><div><span className="eyebrow">02 / VERIFIED TRAINING OUTPUTS</span><h2>Model Performance</h2></div><Badge blush>{data?.status === 'available' ? 'TEST RESULTS' : 'RESULTS UNAVAILABLE'}</Badge></div>
+    {data?.status === 'available' ? <><div className="model-grid">{data.models.map(m => <article className="panel model-card" key={m.name}><div className="section-row"><h3>{m.name}</h3><Badge>HELD-OUT TEST</Badge></div>
+      <div className="metric-grid"><Metric label="DIRECTIONAL HIT RATE" value={m.hit_rate == null ? '—' : percent(100 * m.hit_rate, 1)} note="Sign of five-day excess return" toneClass="positive" />
+        <Metric label="MEAN SPEARMAN IC" value={number(m.ic_mean, 3)} note="Rank correlation per day" />
+        <Metric label="EVALUATED ROWS" value={m.n_rows?.toLocaleString() ?? '—'} note="Held-out predictions" />
+        <Metric label="IC DAYS" value={m.n_days?.toString() ?? '—'} note="Dates in correlation summary" /></div>
+    </article>)}</div>
+      {data.curve && data.curve.length > 1 && <div className="model-grid"><div className="panel"><span className="eyebrow">COST-AWARE AGREEMENT STRATEGY · CUMULATIVE</span><TrendChart values={data.curve.map(p => p.agreement * 100)} labels={data.curve.map(p => p.date)} title="Agreement strategy cumulative return in percent" height={200} /></div>
+      <div className="panel"><span className="eyebrow">SPY BENCHMARK · CUMULATIVE</span><TrendChart values={data.curve.map(p => p.spy * 100)} labels={data.curve.map(p => p.date)} title="SPY cumulative return in percent" height={200} /></div></div>}
+      <p className="fine-print">Training: {data.meta?.train_dates?.join(' → ') ?? '—'} · Test: {data.meta?.test_dates?.join(' → ') ?? '—'}. {data.meta?.caveat ?? ''}</p></>
+    : <div className="panel empty-state"><h3>Real backtest results not available yet</h3><p>{error || data?.reason || 'Loading evaluation data…'}</p><p>Run <code>python -m src.train</code> to generate <code>results/metrics.json</code>. We will not show fabricated accuracy percentages.</p></div>}
+  </section>;
+}
+function HistoricalReplay({ ticker }: { ticker: string }) {
+  const [day, setDay] = useState(new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState<Replay | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => { const ctrl = new AbortController(); setData(null); setError('');
+    apiGet<Replay>(`/api/replay?symbol=${encodeURIComponent(ticker)}&selected_date=${encodeURIComponent(day)}`, ctrl.signal)
+      .then(setData).catch(e => { if (!ctrl.signal.aborted) setError(e.message); });
+    return () => ctrl.abort();
+  }, [ticker, day]);
+  return <section className="panel replay"><div className="section-row"><div><span className="eyebrow">HISTORICAL REPLAY · {ticker}</span><h3>What was knowable on that date?</h3></div><Badge blush>{data?.status === 'retrospective_only' ? 'RETROSPECTIVE ONLY' : 'NOT VERIFIED'}</Badge></div>
+    <div className="replay-grid"><div className="calendar-card"><label className="eyebrow" htmlFor="replay-date">Decision date</label><input id="replay-date" type="date" value={day} max={new Date().toISOString().slice(0, 10)} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDay(e.target.value)} /></div>
+      <div className="replay-result"><div className="three-grid"><Metric label="SELECTED DATE" value={day} note="End-of-day decision" /><Metric label="LAST STORED FORECAST" value={dateLabel(data?.latest_research_date)} note="Not point-in-time verified" /><Metric label="REALIZED RETURN" value="—" note="Not shown without valid replay" /></div>
+        <p>{error || data?.reason || 'Checking historical availability…'}</p></div></div>
+    <p className="fine-print">No historical date is marked verified because the existing pipeline does not preserve fully immutable feature, ingestion, and model-training snapshots for an auditable point-in-time forecast.</p>
+  </section>;
+}
 function Methodology() {
   const steps = [
-    ["01", "Collect", "Use local illustrative review and price samples.", "/assets/fbd86.svg"],
-    ["02", "Analyze", "Measure sample sentiment, satisfaction, and topic trends.", "/assets/3e265.svg"],
-    ["03", "Train", "Compare illustrative neural-network and regression estimates.", "/assets/969c9.svg"],
-    ["04", "Illuminate", "Present forecasts, model alignment, assumptions, and supporting context.", "/assets/4dcef.svg"],
+    ['01', 'Collect', 'Alpaca adjusted bars and published financial news', '/assets/fbd86.svg'],
+    ['02', 'Score', 'News sentiment using VADER or optional Snowflake Cortex', '/assets/3e265.svg'],
+    ['03', 'Train', 'TigerData features, Ridge regression, and MLP models', '/assets/969c9.svg'],
+    ['04', 'Compare', 'Five-day excess return versus SPY and honest held-out metrics', '/assets/4dcef.svg'],
   ];
-  return (
-    <section className="methodology" id="methodology">
-      <span className="eyebrow">03 / METHODOLOGY</span>
-      <div className="method-intro"><h2>A clear path<br />from insight to outlook.</h2><p>Explore a transparent range of possible outcomes with visible inputs that make every research thesis easier to understand and evaluate.</p></div>
-      <div className="process-grid">{steps.map(([number, title, copy, icon]) => (
-        <article key={number}><span className="step">{number}</span><div className="method-icon"><img src={icon} alt="" /></div><h3>{title}</h3><p>{copy}</p><small>DEMONSTRATION WORKFLOW</small></article>
-      ))}</div>
-      <p className="method-note">This local demonstration highlights a thoughtful, transparent research workflow. Snowflake AI, TigerData, market-data, payment, and trading services are represented conceptually and are not connected.</p>
-    </section>
-  );
+  return <section className="methodology" id="methodology"><span className="eyebrow">03 / METHODOLOGY</span>
+    <div className="method-intro"><h2>A clear path<br />from insight to outlook.</h2><p>Readable model research with transparent inputs, real source dates, and cautious interpretation.</p></div>
+    <div className="process-grid">{steps.map(([num, title, desc, icon]) => <article key={num}><span className="step">{num}</span><div className="method-icon"><img src={icon} alt="" /></div><h3>{title}</h3><p>{desc}</p></article>)}</div>
+    <p className="method-note">The original Duolingo Google Play review collector is separate from this financial-news pipeline. A review-specific integration is future work and is not represented as live.</p>
+  </section>;
 }
-
 function About() {
-  return (
-    <section className="page-section about" id="about">
-      <span className="eyebrow">04 / ABOUT LEDGER</span>
-      <h2>Built for the patient investor.</h2>
-      <p>Useful research starts with better questions. What makes a business durable? What expectations are already in its price? What would have to change for the thesis to fail?</p>
-      <div className="pricing">
-        <article className="panel"><span className="eyebrow">FREE RESEARCH</span><h3>Core sentiment signals</h3><strong>$0 / month · Free</strong><Badge blush>PROPOSED · HYPOTHETICAL</Badge><p>Dashboard access, stock screener, and illustrative model comparisons.</p><button className="button secondary">Start free</button></article>
-        <article className="panel pro"><span className="eyebrow">PRO</span><h3>Expanded stock coverage</h3><strong>$29 / month · Pro</strong><Badge blush>PROPOSED · HYPOTHETICAL</Badge><p>Advanced sentiment factors, historical replay, and deeper research signals.</p><button className="button primary">View hypothetical plan</button></article>
-      </div>
-    </section>
-  );
+  return <section className="page-section about" id="about"><span className="eyebrow">04 / ABOUT REPLICAVIRE</span><h2>Built for the curious investor.</h2>
+    <p>ReplicaVire organizes financial news signals and model outputs to help compare research ideas. Forecasts are estimates and should never be treated as guaranteed outcomes.</p>
+    <div className="pricing"><article className="panel"><span className="eyebrow">FREE RESEARCH</span><h3>Research dashboard</h3><strong>$0 / month</strong><Badge blush>PROPOSED PLAN</Badge><p>Tracked stocks, sentiment scores, and research methodology.</p></article>
+      <article className="panel pro"><span className="eyebrow">PRO</span><h3>Advanced research</h3><strong>$29 / month</strong><Badge blush>HYPOTHETICAL</Badge><p>Proposed historical diagnostics and deeper model comparisons. Payments are not implemented.</p></article></div>
+  </section>;
 }
-
-function Home({ onSelect }: { onSelect: (stock: Stock) => void }) {
-  return <><Hero /><Screener onSelect={onSelect} /><ModelPerformance /><Methodology /><About /></>;
-}
-
-function Review({ stars, score, children }: { stars: string; score: string; children: React.ReactNode }) {
-  return <article className="review"><span className="positive">{stars} · sample</span><Badge blush>SAMPLE / DEMO</Badge><p>“{children}”</p><small><b className={score.startsWith("-") ? "negative" : "positive"}>{score}</b> illustrative AI score</small></article>;
-}
-
-function Analysis({ stock, onBack }: { stock: Stock; onBack: () => void }) {
-  const [range, setRange] = useState("1M");
-  const [mode, setMode] = useState<"Compare" | "Overlay">("Compare");
-  return (
-    <main className="analysis-page">
-      <div className="analysis-bar"><button className="back" onClick={onBack}>← Back to screener</button><span>Illustrative analysis · {stock.ticker}</span></div>
-      <div className="disclosure"><Badge blush>DEMO DATA</Badge><b>Prices, reviews, predictions, and sentiment values are illustrative and not verified results.</b></div>
-      <div className="analysis-layout">
-        <div className="analysis-main">
-          <section className="panel stock-summary">
-            <div className="section-row"><div><span className="eyebrow">{stock.company.toUpperCase()}</span><h2>{stock.company.replace(/ Inc\.| SA| Corp\./, "")}</h2></div><Badge>{stock.sentiment > 0 ? "BULLISH SENTIMENT" : "BEARISH SENTIMENT"}</Badge></div>
-            <div className="four-grid">
-              <Metric label="CURRENT PRICE" value={stock.price.toFixed(2)} note={`${stock.day > 0 ? "+" : ""}${stock.day}% today · sample`} tone="dark" />
-              <Metric label="SENTIMENT SCORE" value={`${stock.sentiment > 0 ? "+" : ""}${stock.sentiment}`} note={stock.sentiment > 0 ? "Bullish" : "Bearish"} />
-              <Metric label="7D MOMENTUM" value={`${stock.momentum > 0 ? "+" : ""}${stock.momentum}`} note={stock.momentum > 0 ? "Rising" : "Falling"} />
-              <Metric label="30D SENTIMENT CHANGE" value="+0.18" note="Illustrative" />
-            </div>
-            <div><span className="eyebrow">RESEARCH THESIS</span><p>Strong user retention and premium conversion trends support the illustrative bull case. Sentiment momentum and both local mock models point to a positive five-day outlook.</p></div>
-            <div><span className="eyebrow">KEY RISK</span><p className="fine-print">Competition from AI-powered learning tools and discretionary spending pressure remain the primary sample watchpoints.</p></div>
-          </section>
-          <section className="panel">
-            <div className="section-row"><span className="eyebrow">PRICE CHART</span><div className="tabs">{["1D", "1W", "1M", "1Y"].map((r) => <button className={range === r ? "selected" : ""} key={r} onClick={() => setRange(r)}>{r}</button>)}</div></div>
-            <Chart kind="price" /><div className="legend"><span className="green-line">Illustrative closing price · {range}</span></div>
-          </section>
-          <section className="panel">
-            <span className="eyebrow">SENTIMENT VS. PERFORMANCE</span>
-            <div className="tabs mode-tabs">{(["Compare", "Overlay"] as const).map((value) => <button className={mode === value ? "selected" : ""} key={value} onClick={() => setMode(value)}>{value}{mode === value ? " ✓" : ""}</button>)}</div>
-            <Chart kind="compare" /><p className="fine-print">{mode === "Compare" ? "Separate scales compare direction and shape." : "Price is normalized to the sentiment scale for visual overlay only."} No causal relationship is implied.</p>
-          </section>
-          <section className="panel reviews">
-            <span className="eyebrow">RECENT CUSTOMER REVIEWS</span>
-            <Review stars="★★★★★ · 5/5 · Jan 21, 2025" score="+0.94">The gamified learning experience is still the strongest part of the app. Premium adoption is improving.</Review>
-            <Review stars="★★★★☆ · 4/5 · Jan 20, 2025" score="+0.88">Retention is holding up better than expected, and the community remains engaged.</Review>
-            <Review stars="★★☆☆☆ · 2/5 · Jan 19, 2025" score="-0.31">Concerns around AI competition are still present, but the core product remains sticky.</Review>
-          </section>
-        </div>
-        <aside className="analysis-aside">
-          <section className="panel prediction-cards"><span className="eyebrow">PREDICTION CARDS</span><Metric label="NEURAL NETWORK" value={`+${stock.nn}%`} note="Illustrative five-day prediction" /><Metric label="REGRESSION" value={`+${stock.regression}%`} note="Illustrative five-day prediction" /><Metric label="COMBINED" value={`+${stock.combined}%`} note="Illustrative weighted estimate" /></section>
-          <section className="panel"><div className="section-row"><span className="eyebrow">FORECAST SPREAD</span><b className="mono positive">{stock.spread} pp</b></div><div className="spread-bar"><i style={{ width: `${Math.max(stock.spread * 15, 8)}%` }} /></div><p className="fine-print">Forecast spread, not confidence. This is the absolute percentage-point difference between model estimates.</p></section>
-          <section className="panel"><span className="eyebrow">WHAT IS DRIVING THIS PREDICTION?</span><ul><li>Strong user retention</li><li>Premium conversion growth</li><li>AI learning adoption</li></ul><p className="fine-print">Contributing factors are illustrative, not causal guarantees.</p></section>
-          <section className="panel review-analytics"><span className="eyebrow">REVIEW ANALYTICS</span><div className="three-grid"><Metric label="REVIEW COUNT" value="1,248" note="Illustrative sample" tone="dark" /><Metric label="AVG STAR RATING" value="4.7 / 5" note="Illustrative sample" tone="dark" /><Metric label="NEGATIVE REVIEWS" value="12%" note="Illustrative sample" tone="dark" /></div><Chart kind="spark" /><p className="fine-print">Themes, distribution, volume, and review details are illustrative and unverified.</p></section>
-        </aside>
-      </div>
-      <div className="analysis-replay"><HistoricalReplay /></div>
-    </main>
-  );
-}
-
-function Footer() {
-  return <footer><div><span className="wordmark">ReplicaVire</span><span>Know the business. Understand the opportunity.</span></div><p>Illustrative design and educational research only. All prices, reviews, predictions, model performance, and historical states are sample or hypothetical—not verified market information or investment advice. No live integrations are connected.</p><small>© 2026 ReplicaVire · RESEARCH DEMONSTRATION / USD</small></footer>;
-}
-
-export default function App() {
-  const [selected, setSelected] = useState<Stock | null>(null);
-  const home = () => { setSelected(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
-  return (
-    <div className="app">
-      <Header onHome={home} />
-      {selected ? <Analysis stock={selected} onBack={() => { setSelected(null); smoothScroll("screener"); }} /> : <main><Home onSelect={(stock) => { setSelected(stock); window.scrollTo(0, 0); }} /></main>}
-      <Footer />
+function StockAnalysis({ ticker, onBack }: { ticker: string; onBack: () => void }) {
+  const [detail, setDetail] = useState<StockDetail | null>(null);
+  const [error, setError] = useState('');
+  const [range, setRange] = useState(30);
+  useEffect(() => { const ctrl = new AbortController(); setDetail(null); setError('');
+    apiGet<StockDetail>(`/api/stocks/${ticker}`, ctrl.signal).then(setDetail).catch(e => { if (!ctrl.signal.aborted) setError(e.message); }); return () => ctrl.abort();
+  }, [ticker]);
+  if (error || !detail) return <main className="analysis-page"><div className="analysis-bar"><button className="back" onClick={onBack}>← Back to screener</button></div><div className="panel placeholder-page">{error || 'Loading stock details from TigerData…'}</div></main>;
+  const s = detail.stock;
+  const history = detail.history.slice(-range).filter(x => x.close != null);
+  const sent = detail.sentiment_history.slice(-range);
+  return <main className="analysis-page">
+    <div className="analysis-bar"><button className="back" onClick={onBack}>← Back to screener</button><span>{ticker} · Source: financial news + TigerData</span></div>
+    <div className="disclosure"><Badge>REAL DATABASE VALUES</Badge><b>Predictions estimate excess return versus SPY, not absolute stock return. Blank fields mean unavailable.</b></div>
+    <div className="analysis-layout"><div className="analysis-main">
+      <section className="panel stock-summary"><div className="section-row"><div><span className="eyebrow">{ticker}</span><h2>{s.company}</h2></div><Badge blush={!s.prediction_date}>{s.prediction_date ? `MODEL AS OF ${dateLabel(s.prediction_date)}` : 'NO MATCHED FORECAST'}</Badge></div>
+        <div className="four-grid"><Metric label="LAST STORED CLOSE" value={s.price == null ? '—' : `$${number(s.price)}`} note={dateLabel(s.price_date)} />
+          <Metric label="NEWS SENTIMENT · 5D" value={signed(s.sentiment, 3)} note="Weighted by available scored articles" toneClass={tone(s.sentiment)} />
+          <Metric label="NEWS SENTIMENT · 1D" value={signed(s.sentiment_1d, 3)} note="Backend feature" toneClass={tone(s.sentiment_1d)} />
+          <Metric label="NEWS ITEMS · 5D" value={s.news_count_5d?.toString() ?? '—'} note="Latest feature window" /></div>
+        <p className="fine-print">Sentiment features as of {dateLabel(s.feature_date)}. Source: Finnhub/Alpaca financial news, not Google Play reviews.</p>
+      </section>
+      <section className="panel"><div className="section-row"><span className="eyebrow">STORED STOCK PRICE HISTORY</span><div className="tabs">{[10, 30, 90, 150].map(n => <button className={n === range ? 'selected' : ''} onClick={() => setRange(n)} key={n}>{n}D</button>)}</div></div>
+        <TrendChart values={history.map(p => p.close)} labels={history.map(p => p.ts)} title={`${ticker} historical daily closing prices`} height={220} /></section>
+      <section className="panel"><span className="eyebrow">NEWS SENTIMENT TREND · FIVE-DAY AVERAGE</span>
+        <TrendChart values={sent.map(p => p.sent_5d)} labels={sent.map(p => p.d)} title={`${ticker} five-day average news sentiment`} height={200} />
+        <p className="fine-print">Sentiment uses the existing backend's five-day publication-time window.</p></section>
+      <section className="panel reviews"><div className="section-row"><span className="eyebrow">RECENT FINANCIAL NEWS</span><small>{detail.articles.length} stored articles</small></div>
+        {detail.articles.length ? detail.articles.slice(0, 12).map((a, i) => <article className="review" key={`${a.url}-${i}`}>
+          <small>{dateLabel(a.event_time)} · {a.publisher || a.source_api}</small><Badge blush={a.sentiment != null && a.sentiment < 0}>{a.sentiment == null ? 'UNSCORED' : `Sentiment ${signed(a.sentiment)}`}</Badge>
+          <p><a href={a.url} target="_blank" rel="noopener noreferrer">{a.headline || 'Open source article ↗'}</a></p>
+          {a.summary && <small>{a.summary.slice(0, 270)}</small>}
+        </article>) : <div className="empty-state">No stored articles for this stock yet.</div>}
+      </section>
     </div>
-  );
+    <aside className="analysis-aside">
+      <section className="panel prediction-cards"><span className="eyebrow">5D EXCESS RETURN VS SPY</span>
+        <Metric label="NEURAL NETWORK · MLP" value={percent(s.mlp_excess_pct)} note="Raw MLP estimate" toneClass={tone(s.mlp_excess_pct)} />
+        <Metric label="RIDGE REGRESSION" value={percent(s.ridge_excess_pct)} note="Raw Ridge estimate" toneClass={tone(s.ridge_excess_pct)} />
+        <Metric label="SIMPLE MEAN" value={percent(s.mean_excess_pct)} note="Unweighted mean, not a trained ensemble" toneClass={tone(s.mean_excess_pct)} /></section>
+      <section className="panel"><span className="eyebrow">FORECAST DISAGREEMENT</span><h3>{s.spread_pp == null ? '—' : `${number(s.spread_pp)} percentage points`}</h3><p className="fine-print">Difference between the two excess-return estimates. This is not a confidence score.</p></section>
+      <section className="panel"><span className="eyebrow">DATA PROVENANCE</span><p>Last price: {dateLabel(s.price_date)}</p><p>News feature: {dateLabel(s.feature_date)}</p><p>Prediction: {dateLabel(s.prediction_date)}</p><p className="fine-print">{detail.source_note}</p></section>
+    </aside></div>
+    <div className="analysis-replay"><HistoricalReplay ticker={ticker} /></div>
+  </main>;
+}
+function Footer() {
+  return <footer><div><span className="wordmark">ReplicaVire</span><span>Know the data. Understand the limits.</span></div><p>Research prototype, not investment advice. Forecasts and live-data status depend on the connected backend. Trading and paid subscriptions are not provided by this website.</p><small>© 2026 ReplicaVire · PALMETTO HACKS</small></footer>;
+}
+export default function App() {
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [apiError, setApiError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => { const ctrl = new AbortController(); setLoading(true); setApiError('');
+    apiGet<Overview>('/api/overview', ctrl.signal).then(setOverview).catch(e => { if (!ctrl.signal.aborted) { setOverview(null); setApiError(e.message); } }).finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
+    return () => ctrl.abort();
+  }, [refresh]);
+  const goHome = () => { setSelected(null); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  return <div className="app"><Header onHome={goHome} />
+    {selected ? <StockAnalysis ticker={selected} onBack={() => { setSelected(null); scrollToId('screener'); }} /> : <main>
+      {apiError && <div className="connection-error" role="alert"><b>Backend unavailable:</b> {apiError}. Start the Python API and verify TigerData is configured. <button className="button secondary" onClick={() => setRefresh(v => v + 1)}>Retry</button></div>}
+      <Hero overview={overview} connected={!!overview} />
+      <Screener stocks={overview?.stocks ?? []} loading={loading} onSelect={s => { setSelected(s.ticker); window.scrollTo(0, 0); }} />
+      <ModelPerformance /><Methodology /><About />
+    </main>}
+    <Footer />
+  </div>;
 }
