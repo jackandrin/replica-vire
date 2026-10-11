@@ -53,6 +53,51 @@ def _finnhub():
     return f"AAPL last={r.json().get('c')}"
 
 
+@check("alpaca-sip-15m")
+def _alpaca_sip_15m():
+    from alpaca.data.enums import Adjustment
+    from alpaca.data.historical import StockHistoricalDataClient
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+    c = StockHistoricalDataClient(env("ALPACA_API_KEY"), env("ALPACA_API_SECRET"))
+    now = datetime.now(timezone.utc)
+    df = c.get_stock_bars(StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame(15, TimeFrameUnit.Minute),
+                                           feed="sip", adjustment=Adjustment.ALL, start=now - timedelta(days=7),
+                                           end=now - timedelta(minutes=20))).df
+    return f"{len(df)} SPY 15-min SIP bars (ingest_intraday falls back to iex on FAIL)"
+
+
+@check("finnhub-recommendation")
+def _finnhub_reco():
+    r = requests.get("https://finnhub.io/api/v1/stock/recommendation",
+                     params={"symbol": "AAPL", "token": env("FINNHUB_API_KEY")}, timeout=20)
+    r.raise_for_status()
+    j = r.json()
+    return f"{len(j)} periods, {j[-1]['period']}..{j[0]['period']}" if j else "0 periods"
+
+
+@check("sec-edgar")
+def _sec():
+    from . import edgar
+    cik = edgar.cik_of("AAPL")
+    f = edgar.get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json").json()["filings"]["recent"]
+    return f"AAPL CIK={cik}, {len(f['form'])} recent filings"
+
+
+@check("finra-short-volume")
+def _finra():
+    d = datetime.now(timezone.utc).date()
+    for _ in range(10):  # most recent published weekday file
+        d -= timedelta(days=1)
+        if d.weekday() >= 5:
+            continue
+        r = requests.get(f"https://cdn.finra.org/equity/regsho/daily/CNMSshvol{d:%Y%m%d}.txt", timeout=30,
+                         headers={"User-Agent": env("SEC_USER_AGENT", False) or "hackathon-trader"})
+        if r.status_code == 200:
+            return f"{d}: {len(r.text.splitlines())} lines"
+    raise RuntimeError("no FINRA CNMS file found in the last 10 days")
+
+
 @check("tigerdata")
 def _tiger():
     with tiger() as conn, conn.cursor() as cur:

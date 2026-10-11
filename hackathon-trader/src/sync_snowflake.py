@@ -1,4 +1,4 @@
-"""Copy FEATURES, LABELS, PREDICTIONS, ORDERS from TigerData to Snowflake.
+"""Copy SIGNALS, ALERTS, ORDERS, SENTIMENT_EVENTS from TigerData to Snowflake (for analysis in Snowflake).
 Optional: if this fails the rest of the pipeline is unaffected.
 python -m src.sync_snowflake"""
 import snowflake.connector
@@ -9,10 +9,10 @@ from .common import env, get_logger, query_df
 log = get_logger("sync_snowflake")
 
 TABLES = {
-    "FEATURES": "SELECT * FROM features",
-    "LABELS": "SELECT * FROM labels",
-    "PREDICTIONS": "SELECT * FROM predictions",
+    "SIGNALS": "SELECT * FROM signals",
+    "ALERTS": "SELECT * FROM alerts",
     "ORDERS": "SELECT * FROM orders",
+    "SENTIMENT_EVENTS": "SELECT * FROM sentiment_events WHERE published_at > now() - interval '30 days'",
 }
 
 

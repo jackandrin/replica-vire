@@ -64,7 +64,138 @@ CREATE TABLE IF NOT EXISTS orders (
     status text, asof date, created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Direction vector per symbol/decision date, written by src/autotrade.py, read by the web API
+CREATE TABLE IF NOT EXISTS signals (
+    symbol text NOT NULL, asof date NOT NULL,
+    direction text, expected_pct double precision, timeframe text, height double precision,
+    suggested_usd double precision, reason text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, asof)
+);
+
+-- Single-user dashboard settings (id = 1)
+CREATE TABLE IF NOT EXISTS user_settings (
+    id int PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Recommendations / auto-trade notices shown as dashboard toasts.
+-- status: new -> requested (user clicked Execute) -> executed | error ; or dismissed
+CREATE TABLE IF NOT EXISTS alerts (
+    id bigserial PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(),
+    asof date NOT NULL, symbol text NOT NULL, action text NOT NULL,
+    expected_pct double precision, timeframe text, act_by timestamptz,
+    size_usd double precision, height double precision, reason text,
+    mode text NOT NULL DEFAULT 'recommend', status text NOT NULL DEFAULT 'new', detail text,
+    UNIQUE (symbol, asof, action)
+);
+
 CREATE TABLE IF NOT EXISTS run_log (
     id bigserial PRIMARY KEY, run_at timestamptz NOT NULL DEFAULT now(),
     step text NOT NULL, ok boolean NOT NULL, detail text
 );
+
+-- ============================================================================
+-- v2 tables (docs/V2_CONTRACT.md). All timestamps UTC. init_db splits on semicolons,
+-- so no DO blocks here: guarded statements only.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS symbols (
+    symbol      text PRIMARY KEY,
+    company     text,
+    sector      text,
+    sector_etf  text,
+    kind        text NOT NULL DEFAULT 'stock',   -- stock | etf
+    cik         text,                            -- 10-digit zero-padded SEC CIK, nullable
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bars_15m (
+    symbol       text             NOT NULL,
+    ts           timestamptz      NOT NULL,      -- bar START (Alpaca timestamp)
+    open         double precision,
+    high         double precision,
+    low          double precision,
+    close        double precision,
+    volume       double precision,
+    vwap         double precision,
+    trade_count  double precision,
+    PRIMARY KEY (symbol, ts)
+);
+SELECT create_hypertable('bars_15m', 'ts', if_not_exists => TRUE, chunk_time_interval => INTERVAL '30 days');
+-- Enable compression only if not yet enabled (re-running ALTER on compressed chunks errors on older Timescale).
+CREATE OR REPLACE FUNCTION _v2_enable_bars_15m_compression() RETURNS void LANGUAGE sql AS $$
+    ALTER TABLE bars_15m SET (timescaledb.compress, timescaledb.compress_segmentby = 'symbol',
+                              timescaledb.compress_orderby = 'ts DESC')
+$$;
+SELECT _v2_enable_bars_15m_compression() FROM timescaledb_information.hypertables
+ WHERE hypertable_name = 'bars_15m' AND NOT compression_enabled;
+DROP FUNCTION IF EXISTS _v2_enable_bars_15m_compression();
+SELECT add_compression_policy('bars_15m', INTERVAL '7 days', if_not_exists => TRUE);
+
+CREATE TABLE IF NOT EXISTS bars_1d (
+    symbol  text             NOT NULL,
+    d       date             NOT NULL,           -- US/Eastern trading day
+    open    double precision,
+    high    double precision,
+    low     double precision,
+    close   double precision,
+    volume  double precision,
+    vwap    double precision,
+    PRIMARY KEY (symbol, d)
+);
+
+-- kind: earnings | insider | analyst | short_volume (see contract for event_time / available_at rules)
+CREATE TABLE IF NOT EXISTS events (
+    symbol        text        NOT NULL,
+    kind          text        NOT NULL,
+    event_time    timestamptz NOT NULL,
+    available_at  timestamptz NOT NULL,
+    value         double precision,
+    key           text        NOT NULL,          -- dedupe id: accession, accession-row, period or date
+    payload       text,                          -- JSON
+    ingested_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (symbol, kind, event_time, key)
+);
+CREATE INDEX IF NOT EXISTS events_symbol_available ON events (symbol, available_at);
+
+CREATE TABLE IF NOT EXISTS documents (
+    doc_id        bigserial PRIMARY KEY,
+    symbol        text        NOT NULL,
+    source        text        NOT NULL,          -- alpaca | finnhub | edgar
+    doc_type      text        NOT NULL,          -- news | 8-K | 10-Q | 10-K
+    published_at  timestamptz NOT NULL,          -- EDGAR: acceptance datetime
+    title         text,
+    body          text,                          -- plain text, <= 8000 chars
+    url           text        NOT NULL,
+    content_hash  text,                          -- sha1 of normalized title + body
+    ingested_at   timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (symbol, url)
+);
+CREATE INDEX IF NOT EXISTS documents_symbol_published ON documents (symbol, published_at);
+
+-- Written by src/sentiment_agent.py
+CREATE TABLE IF NOT EXISTS sentiment_events (
+    doc_id          bigint      NOT NULL,
+    symbol          text        NOT NULL,
+    published_at    timestamptz NOT NULL,
+    direction       text,                        -- improving | deteriorating | stable
+    delta           double precision,            -- [-1, 1]
+    level           double precision,            -- [0, 100]
+    novelty         double precision,            -- [0, 1]
+    materiality     double precision,            -- [0, 1]
+    horizon         text,                        -- hours | days | weeks
+    drivers         text,                        -- JSON list of str
+    summary         text,
+    backend         text,
+    model           text,
+    prompt_version  text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (doc_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS sentiment_events_symbol_published ON sentiment_events (symbol, published_at);
+
+-- v2 model outputs on the existing tables (written by src/predict.py and src/autotrade.py)
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS ts timestamptz,
+    ADD COLUMN IF NOT EXISTS horizons jsonb, ADD COLUMN IF NOT EXISTS regressors jsonb,
+    ADD COLUMN IF NOT EXISTS drivers jsonb, ADD COLUMN IF NOT EXISTS exit_at timestamptz,
+    ADD COLUMN IF NOT EXISTS model_version text;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS exit_at timestamptz;

@@ -1,0 +1,8 @@
+# Local-GPU backend for src/sentiment_agent.py (--backend hf), e.g. on the Theia HPC (deploy/sentiment.sbatch).
+# Install on top of requirements-pipeline.txt. torch is installed separately (pick the CUDA wheel for the cluster):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+transformers>=4.43          # Llama 3.1 rope scaling needs >= 4.43
+accelerate>=0.33            # device_map="auto"
+sentence-transformers>=2.7  # arctic-embed embeddings; local_files_only kwarg
+pyarrow>=14
+huggingface_hub[cli]>=0.23  # huggingface-cli download / login on the login node

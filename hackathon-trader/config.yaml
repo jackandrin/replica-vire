@@ -1,31 +1,50 @@
 # Central config. Change tickers/params here, not in code.
-tickers: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, JPM, XOM, UNH,
-          JNJ, V, WMT, PG, HD, KO, PEP, COST, AMD, NFLX]
-benchmark: SPY            # used for excess-return label and market features; never traded
-history_days: 1100        # ~3 years of calendar days
-alpaca_feed: iex          # free tier = iex. Use sip only if your plan allows it.
-label:
-  horizon_days: 5         # label = open[t+1+H]/open[t+1]-1 minus same for SPY
-split:
-  test_frac: 0.20         # last 20% of dates = held-out test
-  val_frac: 0.15          # last 15% of the train dates = validation (early stopping / alpha)
-  gap_days: 7             # trading days dropped between adjacent splits (> label horizon)
-ridge:
-  alphas: [0.1, 1, 10, 100, 1000, 10000]
-mlp:
-  h1: 32
-  h2: 16
-  dropout: 0.2
-  lr: 0.001
-  weight_decay: 0.001
-  epochs: 300
-  patience: 20
-  seed: 42
-strategy:
-  top_k: 5                # max positions
-  agree_top_frac: 0.4     # both models must rank the name in their top 40%
-  min_conviction: 0.0     # mlp mu/sigma must exceed this
-  max_gross: 0.5          # max fraction of equity invested
-  max_position: 0.10      # per-name cap (fraction of equity)
-  min_order_usd: 25
-  cost_bps: 5             # one-way cost assumption in the backtest
+# Demo universe: 5 per GICS sector (sector map in src/sectors.py)
+tickers: [AAPL, MSFT, NVDA, AVGO, AMD,  GOOGL, META, NFLX, DIS, TMUS,  AMZN, TSLA, HD, MCD, NKE,
+          WMT, PG, KO, PEP, COST,  UNH, JNJ, LLY, PFE, MRK,  JPM, V, BAC, GS, MA,
+          XOM, CVX, COP, SLB, EOG,  CAT, GE, HON, UPS, BA,  LIN, SHW, FCX, NEM, DOW,
+          NEE, DUK, SO, D, AEP,  PLD, AMT, EQIX, O, SPG]
+benchmark: SPY            # market context symbol and dashboard benchmark; never traded
+autotrade:                # defaults for the dashboard's Auto-Trading settings (user_settings overrides)
+  auto_trading: false     # false = recommendations only (toasts); true = place paper orders
+  sectors: []             # empty = all sectors
+  min_usd: 50             # smallest order the system may place
+  max_usd: 500            # largest order the system may place
+  min_height: 0.5         # conviction (z-score) below which nothing is traded
+  full_height: 2.0        # conviction at which the order reaches max_usd
+  direction_mode: both    # both | long_only | short_only
+  max_positions: 10
+  day_trade_min_height: 2.5  # same-day exits blocked unless conviction exceeds this
+data:                     # v2 ingestion window (see docs/V2_CONTRACT.md)
+  start: "2019-01-01"     # first date to download (gives a 1-year warm-up before 2020 training data)
+  feed: sip               # Alpaca historical feed; falls back to iex if SIP is not permitted
+  bundle_dir: data/bundle # export_dataset writes parquet here; train.py reads it
+sentiment:                # src/sentiment_agent.py
+  backend: cortex         # cortex (Snowflake) | hf (local GPU, for HPC backfill)
+  cortex_model: llama3.1-8b
+  hf_model: meta-llama/Llama-3.1-8B-Instruct     # same weights as cortex_model -> no train/serve skew
+  cortex_embed_model: snowflake-arctic-embed-m-v1.5
+  hf_embed_model: Snowflake/snowflake-arctic-embed-m-v1.5
+  max_docs_per_symbol_day: 6
+  retrieve_k: 3
+  memory_events: 5
+  lookback_days: 90
+  prompt_version: v1
+model:                    # src/train.py (v2)
+  horizons: ["6h", "12h", "18h", "1d", "3d", "5d"]
+  decision_times: ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "15:45"]   # US/Eastern
+  test_frac: 0.15         # last 15% of days = held-out test
+  val_frac: 0.15          # last 15% of the remaining days = validation (early stopping)
+  folds: 6                # walk-forward folds used to produce out-of-fold regressor predictions
+  embargo_days: 6         # trading days purged between train and evaluation blocks (> longest horizon)
+  ridge_alphas: [0.1, 1, 10, 100, 1000]
+  nn:
+    hidden: [64, 32, 16]
+    dropout: 0.2
+    lr: 0.001
+    weight_decay: 0.0001
+    batch_size: 1024
+    epochs: 200
+    patience: 15
+    seed: 42
+  cost_bps: 5             # one-way cost used in the score and the backtest

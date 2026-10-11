@@ -1,5 +1,5 @@
 [Unit]
-Description=Hackathon Trader daily cycle (ingest, features, predict, paper orders)
+Description=ReplicaVire live cycle (ingest, sentiment agent, predict, recommendations / paper orders)
 After=network-online.target
 Wants=network-online.target
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ubuntu 22.04 / 24.04 setup for hackathon-trader.
 #   ./setup.sh                 install system packages, venv, python deps, .env, run offline tests
-#   ./setup.sh --systemd       ...also install the dashboard service + daily-cycle timer (needs sudo)
+#   ./setup.sh --systemd       ...also install the trading-cycle timer (needs sudo)
 #   ./setup.sh --skip-apt      skip apt (no sudo / packages already present)
 #   ./setup.sh --no-torch      skip PyTorch (ridge-only; MLP will not work)
 #   ./setup.sh --gpu           install the default (CUDA) PyTorch wheel instead of the CPU one
@@ -73,13 +73,11 @@ python -m pytest -q -p no:cacheprovider
 if [ "$WITH_SYSTEMD" -eq 1 ]; then
   say "Installing systemd units"
   RUN_USER="${SUDO_USER:-$(id -un)}"
-  for f in deploy/hackathon-dashboard.service deploy/hackathon-cycle.service deploy/hackathon-cycle.timer; do
+  for f in deploy/hackathon-cycle.service deploy/hackathon-cycle.timer; do
     sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$APP_DIR|g" "$f" | $SUDO tee "/etc/systemd/system/$(basename "$f")" >/dev/null
   done
   $SUDO systemctl daemon-reload
-  $SUDO systemctl enable --now hackathon-dashboard.service
   $SUDO systemctl enable --now hackathon-cycle.timer
-  echo "dashboard: http://<server-ip>:8501   (or: ssh -L 8501:localhost:8501 user@server)"
   systemctl list-timers hackathon-cycle.timer --no-pager || true
 fi
 

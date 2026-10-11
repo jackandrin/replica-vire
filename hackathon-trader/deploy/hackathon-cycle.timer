@@ -1,10 +1,13 @@
 [Unit]
-Description=Run the trader cycle after the US market close
+Description=Run the trader cycle at the model's decision times (US market hours)
 
 [Timer]
-# 16:20 New York time, Mon-Fri, independent of the server's timezone
-OnCalendar=Mon..Fri 16:20 America/New_York
-Persistent=true
+# Decision times the model was trained on (config.yaml model.decision_times), 1 minute after each bar closes.
+# New York time, Mon-Fri, independent of the server's timezone. Market holidays: predict finds no new bar
+# for today and scores the last session again (harmless; alerts are de-duplicated per day).
+OnCalendar=Mon..Fri 10..15:01 America/New_York
+OnCalendar=Mon..Fri 15:46 America/New_York
+Persistent=false
 
 [Install]
 WantedBy=timers.target
